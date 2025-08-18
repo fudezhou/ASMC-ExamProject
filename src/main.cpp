@@ -4,23 +4,28 @@
 
 int main() {
 
-    // std::cout << "CDF at 0.15: " << norm_cdf(0.15) << std::endl;
+    EuropeanOption<double> europeanOption;
+    europeanOption.setSpotPrice(100.0);
+    europeanOption.setStrikePrice(100.0);
+    europeanOption.setRiskFreeRate(0.05);
+    europeanOption.setVolatility(0.2);
+    europeanOption.setMaturityTime(1.0);
 
-    double spotPrice = 100.0;
-    double strikePrice = 100.0;
-    double riskFreeRate = 0.05;
-    double volatility = 0.2;
-    double timeToExpiration = 1.0;
+    europeanOption.info();
 
-    BlackAndScholes<double> bs(spotPrice, strikePrice, riskFreeRate, volatility, timeToExpiration);
+    std::cout << "\nEuropean Option Price (Call): " << europeanOption.closedForm("call") << "\n";
+    std::cout << "European Option Price (Put): " << europeanOption.closedForm("put") << "\n";
 
-    double callPrice = bs.price("call");
-    double putPrice = bs.price("put");
-    //double error = bs.price("error") - callPrice;
+    // npaths default = 100000
+    MCReturn nMCGBMcall = europeanOption.naiveMonteCarloGBM("call", 100000);
+    std::cout << "European Option Price \n(Call - Naive Monte Carlo GBM): " << nMCGBMcall.price << " ± " << 1.96 * nMCGBMcall.stdDev << " CI at 95%\n";
+    MCReturn nMCGBMput = europeanOption.naiveMonteCarloGBM("put", 100000);
+    std::cout << "European Option Price \n(Put - Naive Monte Carlo GBM): " << nMCGBMput.price << " ± " << 1.96 * nMCGBMput.stdDev << " CI at 95%\n";
 
-    std::cout << "Call Price: " << callPrice << std::endl;
-    std::cout << "Put Price: " << putPrice << std::endl;
-    //std::cout << "Error: " << error << std::endl;
+    MCReturn fLVCVMCGBMcall = europeanOption.fastLowVarMCGBM("call", 20000);
+    std::cout << "European Option Price \n(Call - Fast Low Variance Monte Carlo GBM): " << fLVCVMCGBMcall.price << " ± " << 1.96 * fLVCVMCGBMcall.stdDev << " CI at 95%\n";
+    MCReturn fLVCVMCGBMput = europeanOption.fastLowVarMCGBM("put", 20000);
+    std::cout << "European Option Price \n(Put - Fast Low Variance Monte Carlo GBM): " << fLVCVMCGBMput.price << " ± " << 1.96 * fLVCVMCGBMput.stdDev << " CI at 95%\n";
 
     return 0;
 }
