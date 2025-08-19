@@ -185,10 +185,7 @@ public:
     T advance(T S_t, T r, T sigma, T dt) const override;
     T advanceWithZ(T S_t, T r, T sigma, T dt, T Z) const override;
     T terminalDraw(T S0, T r, T sigma, T maturity) const override;
-    T terminalDrawWithZ(T S0, T r, T sigma, T maturity, T Z) const
-    {
-        return S0 * std::exp((r - 0.5 * sigma * sigma) * maturity + sigma * Z * std::sqrt(maturity));
-    }
+    T terminalDrawWithZ(T S0, T r, T sigma, T maturity, T Z) const override;
 
     virtual const char *getName() const override { return "GBM"; };
 };
