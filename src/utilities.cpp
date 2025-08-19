@@ -1,6 +1,12 @@
 #include <../include/utilities.hpp>
 
 template <typename T>
+void Option<T>::setName(const std::string& name)
+{
+    _name = name;
+}
+
+template <typename T>
 void Option<T>::setType(const std::string& optionType)
 {
     _optionType = optionType;
@@ -35,6 +41,13 @@ void Option<T>::setMaturityTime(T maturityTime)
 {
     _maturityTime = maturityTime;
 }
+
+template <typename T>
+const std::string& Option<T>::getName() const
+{
+    return _name;
+}
+
 
 template <typename T>
 const std::string& Option<T>::getType() const
@@ -84,18 +97,14 @@ void Option<T>::info() const
     std::cout << "======================================\n";
 }
 
-// template <typename T>
-// void EuropeanOption<T>::setNumPaths(const unsigned long& numPaths)
-// {
-//     _numPaths = numPaths;
-// }
-
-// template <typename T>
-// unsigned long EuropeanOption<T>::getNumPaths() const
-// {
-//     return _numPaths;
-// }
-
+template <typename T>
+const std::function<T(T)> EuropeanOption<T>::payOff() const
+{
+    const auto phi = (this -> getType() == "call") ? 1.0 : -1.0;
+    return [phi, strikePrice = this->getStrikePrice()](T finalPrice) {
+        return std::fmax(phi * (finalPrice - strikePrice), 0.0);
+    };
+}
 template <typename T>
 T EuropeanOption<T>::closedForm(const std::string& optionType)
 {
@@ -128,317 +137,11 @@ T EuropeanOption<T>::closedForm(const std::string& optionType)
 
 }
 
-/*
-    First Naive implementation
-*/
-// template <typename T>
-// T EuropeanOption<T>::naiveMonteCarloGBM(const std::string& optionType, int numPaths)
-// {
-//     if (optionType != "call" && optionType != "put")
-//         throw std::invalid_argument("Invalid option type");
-
-//     this->setType(optionType);
-
-//     if (numPaths <= 0)
-//         throw std::invalid_argument("Number of paths must be positive");
-
-//     setNumPaths(numPaths);
-
-//     // Get option parameters
-//     const double S0       = this->getSpotPrice();
-//     const double K        = this->getStrikePrice();
-//     const double r        = this->getRiskFreeRate();
-//     const double sigma    = this->getVolatility();
-//     const double maturity = this->getMaturityTime();
-
-//     // Set the number of time steps
-//     const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
-//     // Calculate the time step size
-//     const double dt = maturity / static_cast<double>(numSteps);
-//     const double sqrtDt = std::sqrt(dt);
-
-//     _pricePaths.clear(); // Clear any existing price paths
-//     _pricePaths.resize(_numPaths, std::vector<T>(numSteps, 0.0)); // Resize to accommodate the number of paths
-
-//     // Generate price paths
-//     // update rule is: 
-//     // S_t 
-//     for (std::size_t i = 0; i < _numPaths; ++i) // for each simulation path...
-//     {
-//         double Wt = 0.0; // initiall each path start with W_t = 0, also W_0 = 0
-//         double t  = 0.0;
-
-//         for (std::size_t j = 0; j < numSteps; ++j) // ..for each time step of a given simulation path
-//         {
-//             Wt += standard_normal_sample() * sqrtDt; // Brownian motion increment 
-//             t = (j + 1) * dt; // (j+1) because in the first column we want the next time step update
-
-//             _pricePaths[i][j] = S0 * std::exp((r - 0.5 * sigma * sigma) * t + sigma * Wt);
-//         }
-//     }
-
-//     double cumPayoff = 0.0;
-
-//     for (std::size_t i = 0; i < _numPaths; ++i) // for each simulation path
-//     {
-//         const double ST = _pricePaths[i].back(); // get the final price of the path, same as _pricePaths[i][numSteps - 1]
-//         const double payoff = (optionType == "call") 
-//             ? std::max(0.0, ST - K) // Call option payoff
-//             : std::max(0.0, K - ST); // Put option payoff
-//         cumPayoff += payoff; // accumulate the payoff
-//     }
-
-//     // return discounted average payoff
-//     return std::exp(-r * maturity) * (cumPayoff / static_cast<double>(_numPaths));
-// }
-
-/*
-    Second Naive implementation
-*/
-// template <typename T>
-// T EuropeanOption<T>::naiveMonteCarloGBM(const std::string& optionType, int numPaths)
-// {
-//     if (optionType != "call" && optionType != "put")
-//         throw std::invalid_argument("Invalid option type");
-
-//     this->setType(optionType);
-
-//     if (numPaths <= 0)
-//         throw std::invalid_argument("Number of paths must be positive");
-
-//     setNumPaths(numPaths);
-
-//     // Get option parameters
-//     const double S0       = this->getSpotPrice();
-//     const double K        = this->getStrikePrice();
-//     const double r        = this->getRiskFreeRate();
-//     const double sigma    = this->getVolatility();
-//     const double maturity = this->getMaturityTime();
-
-//     // Set the number of time steps
-//     const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
-//     // Calculate the time step size
-//     const double dt = maturity / static_cast<double>(numSteps);
-//     const double sqrtDt = std::sqrt(dt);
-
-//     _pricePaths.clear(); // Clear any existing price paths
-//     _pricePaths.resize(_numPaths, std::vector<T>(numSteps + 1)); // Resize to accommodate the number of paths
-
-//     // Generate price paths
-//     double cumPayoff = 0.0;
-
-//     for (std::size_t i = 0; i < _numPaths; ++i) // for each simulation path...
-//     {
-//         double S = S0; // initial price
-//         _pricePaths[i][0] = S; // store the initial price
-
-//         for (std::size_t j = 1; j <= numSteps; ++j) // ..for each time step of a given simulation path
-//         {
-//             const double Z = standard_normal_sample();
-//             S *= std::exp((r - 0.5 * sigma * sigma) * dt + sigma * sqrtDt * Z);
-//             _pricePaths[i][j] = S; // store the price at the next time step
-//         }
-
-//         const double ST = S; // final price of the last step in the last path
-//         cumPayoff += (optionType == "call") 
-//                     ? std::max(0.0, ST - K) // Call option payoff
-//                     : std::max(0.0, K - ST); // Put option payoff
-//     }
-
-//     // return discounted average payoff
-//     return std::exp(-r * maturity) * (cumPayoff / static_cast<double>(_numPaths));
-// }
-
-/*
-    Third Naive implementation
-*/
-template <typename T>
-const MCReturn<T> EuropeanOption<T>::naiveMonteCarloGBM(const std::string& optionType, int numPaths)
-{
-    if (optionType != "call" && optionType != "put")
-        throw std::invalid_argument("Invalid option type");
-
-    this->setType(optionType);
-
-    const double phi = (optionType == "call") ? 1.0 : -1.0;
-
-    if (numPaths <= 1)
-        throw std::invalid_argument("Number of paths must be positive and greater or equal to 2");
-
-    // Get option parameters
-    const double S0       = this->getSpotPrice();
-    const double K        = this->getStrikePrice();
-    const double r        = this->getRiskFreeRate();
-    const double sigma    = this->getVolatility();
-    const double maturity = this->getMaturityTime();
-
-    // Set the number of time steps
-    const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
-
-    std::cout << "\nRunning Naive Monte Carlo GBM for " << numPaths << " paths and " << numSteps << " time steps...\n";
-
-    // Calculate the time step size
-    const double dt = maturity / static_cast<double>(numSteps);
-    const double sqrtDt = std::sqrt(dt);
-
-    _stride = numSteps + 1; // stride is the number of time steps + 1 for the initial price
-    _pricePaths_flat.resize(numPaths * _stride, 0.0); // with .assign() you are initializing the vector with zeros, so you are clearing all previous data as well
-
-    double sum = 0.0;
-    double sum2 = 0.0;
-
-    for (std::size_t i = 0; i < numPaths; ++i)
-    {
-        const std::size_t base = i * _stride;
-        double S = S0; // initial price
-        _pricePaths_flat[base] = S0;
-
-        for (std::size_t j = 1; j <= numSteps; ++j)
-        {
-            S *= std::exp((r - 0.5 * sigma * sigma) * dt + sigma * sqrtDt * standard_normal_sample());
-            _pricePaths_flat[base + j] = S;
-        }
-
-        const double discountedPayoff = std::exp(-r * maturity) * std::fmax(0.0, phi * (S - K));
-        sum += discountedPayoff;
-        sum2 += discountedPayoff * discountedPayoff;
-    }
-
-    const double mean = sum / static_cast<double>(numPaths);
-    const double variance = (sum2  - static_cast<double>(numPaths) * (mean * mean)) / (static_cast<double>(numPaths) - 1.0); // unbiased
-    const double stdDev = std::sqrt(variance )/ std::sqrt(static_cast<double>(numPaths));
-
-    // return discounted average payoff
-    return { mean, variance, stdDev };
-}
-
-template <typename T>
-const MCReturn<T> EuropeanOption<T>::fastLowVarMCGBM(const std::string& optionType, 
-                                                     int numPaths, 
-                                                     bool antithetic, 
-                                                     bool controlVariates)
-{
-    /*
-       Fast Low Variance Control Variate Monte Carlo for GBM
-       Exploits:
-        - equivalence in law --> no need to simulate the entire path
-        - antithetic variates on the final payoff (variance reduction)
-        - control variates on the initial price (variance reduction)
-    */
-    if (optionType != "call" && optionType != "put")
-        throw std::invalid_argument("Invalid option type");
-
-    this->setType(optionType);
-
-    const double phi = (optionType == "call") ? 1.0 : -1.0;
-
-    if (numPaths <= 1)
-        throw std::invalid_argument("Number of paths must be positive and greater or equal to 2");
-    
-    std::cout << "\nRunning Fast Low Variance Monte Carlo GBM for " 
-              << numPaths << " paths with antithetic = " << std::boolalpha << antithetic 
-              << " and control variates = " << controlVariates << "...\n";
-
-    // Get option parameters
-    const double S0       = this->getSpotPrice();
-    const double K        = this->getStrikePrice();
-    const double r        = this->getRiskFreeRate();
-    const double sigma    = this->getVolatility();
-    const double maturity = this->getMaturityTime();
-
-    // new variables
-    const bool useAntithetic = antithetic;
-    const bool useControlVariates = controlVariates;
-
-    // stats accumulator
-    double sumA=0.0, sumA2=0.0; // cumulative sum and sum of squares for antithetic variates
-    double sumC=0.0, sumC2=0.0; // cumulative sum and sum of squares for control variates
-    double sumAC=0.0; // cumulative sum for antithetic and control variates (covariance)
-
-    int used = 0;
-    if (useAntithetic)
-    {
-        const int half = numPaths / 2;
-        used = 2 * half;
-
-        for (std::size_t i = 0; i < half; ++i)
-        {
-            const double Z = standard_normal_sample();
-
-            // Calculate the final price for the original path
-            const double ST = gbm_ST(S0, r, sigma, maturity, Z);
-            // Calculate the final price for the antithetic path
-            const double ST_antithetic = gbm_ST(S0, r, sigma, maturity, -Z);
-
-            // Calculate the discounted payoff for both paths
-            const double discountedPayoff = std::exp(-r * maturity) * std::fmax(0.0, phi * (ST - K));
-            const double discountedPayoff_antithetic = std::exp(-r * maturity) * std::fmax(0.0, phi * (ST_antithetic - K));
-
-            // Calculate control variates
-            const double controlVariate = std::exp(-r * maturity) * ST;
-            const double controlVariate_antithetic = std::exp(-r * maturity) * ST_antithetic;
-
-            sumA += discountedPayoff + discountedPayoff_antithetic;
-            sumA2 += discountedPayoff * discountedPayoff + discountedPayoff_antithetic * discountedPayoff_antithetic;
-            sumC += controlVariate + controlVariate_antithetic;
-            sumC2 += controlVariate * controlVariate + controlVariate_antithetic * controlVariate_antithetic;
-            sumAC += discountedPayoff * controlVariate + discountedPayoff_antithetic * controlVariate_antithetic;
-        }
-    } else {
-        used = numPaths;
-
-        for (std::size_t i = 0; i < numPaths; ++i)
-        {
-            const double Z = standard_normal_sample();
-
-            // Calculate the final price
-            const double ST = gbm_ST(S0, r, sigma, maturity, Z);
-
-            // Calculate the discounted payoff
-            const double discountedPayoff = std::exp(-r * maturity) * std::fmax(0.0, phi * (ST - K));
-
-            // Calculate control variates
-            const double controlVariate = std::exp(-r * maturity) * ST;
-
-            sumA += discountedPayoff;
-            sumA2 += discountedPayoff * discountedPayoff;
-            sumC += controlVariate;
-            sumC2 += controlVariate * controlVariate;
-            sumAC += discountedPayoff * controlVariate;
-        }
-    }
-
-    const double N = static_cast<double>(used);
-
-    const double E_A = sumA / N; // computed price for antithetic variates (mean)
-    const double E_C = sumC / N; // computed price for control variates (mean)
-
-    // unbiased stats
-    const double Var_A = (sumA2 - N * E_A * E_A) / (N - 1); // variance of the price for antithetic variates
-    const double Var_C = (sumC2 - N * E_C * E_C) / (N - 1); // variance of the price for control variates
-    const double Cov_AC = (sumAC - N * E_A * E_C) / (N - 1); // covariance between antithetic and control variates
-
-    double price = E_A;
-    double var = Var_A;
-
-    if (useControlVariates && Var_C > 0.0)
-    {
-        // Adjust the price using control variates
-        const double beta = Cov_AC / Var_C; // optimal beta
-        const double adjustedPrice = E_A - beta * (E_C - S0);
-        const double adjustedVar = Var_A - Cov_AC * Cov_AC / Var_C; // adjusted variance
-        price = adjustedPrice;
-        var = adjustedVar;
-    }
-
-    return { price, var, std::sqrt(var/N) }; // return the price, variance, and standard deviation
-}
-
 template <typename T>
 void EuropeanOption<T>::info() const
 {
     std::cout << "======================================\n"
-              << "European Option Info:\n"
+              << this->getName() << " Option Info\n"
               << "Spot Price     : " << this->getSpotPrice() << "\n"
               << "Strike Price   : " << this->getStrikePrice() << "\n"
               << "Risk-Free Rate : " << this->getRiskFreeRate() << "\n"
@@ -447,5 +150,675 @@ void EuropeanOption<T>::info() const
     std::cout << "======================================\n";
 }
 
+template <typename T>
+T GBM<T>::advance(T S_t, T r, T sigma, T dt) const // one step GBM
+{
+    const T Z = static_cast<T>(standard_normal_sample());
+    return S_t * std::exp((r - 0.5 * sigma * sigma) * dt + sigma * Z * std::sqrt(dt));
+}
+
+template <typename T>
+T GBM<T>::advanceWithZ(T S_t, T r, T sigma, T dt, T Z) const
+{
+    return S_t * std::exp((r - 0.5 * sigma * sigma) * dt + sigma * Z * std::sqrt(dt));
+}
+
+template <typename T>
+T GBM<T>::terminalDraw(T S0, T r, T sigma, T maturity) const
+{
+    // Implement the GBM terminal draw
+    const T Z = static_cast<T>(standard_normal_sample());
+    return S0 * std::exp((r - 0.5 * sigma * sigma) * maturity + sigma * Z * std::sqrt(maturity));
+}
+
+template <typename T>
+T Euler<T>::advance(T S_t, T r, T sigma, T dt) const
+{
+    const T Z = static_cast<T>(standard_normal_sample());
+    return S_t * (1.0 + r * dt + sigma * Z * std::sqrt(dt));
+}
+
+template <typename T>
+T Euler<T>::advanceWithZ(T S_t, T r, T sigma, T dt, T Z) const
+{
+    return S_t * (1.0 + r * dt + sigma * Z * std::sqrt(dt));
+}
+
+template <typename T>
+T Milstein<T>::advance(T S_t, T r, T sigma, T dt) const
+{
+    // Implement the Milstein advance step
+    const T Z = static_cast<T>(standard_normal_sample());
+    return  S_t * (1.0 + r * dt + sigma * Z * std::sqrt(dt) +
+            0.5 * sigma * sigma * (Z * Z - 1.0) * dt);
+}
+
+template <typename T>
+T Milstein<T>::advanceWithZ(T S_t, T r, T sigma, T dt, T Z) const
+{
+    return S_t * (1.0 + r * dt + sigma * Z * std::sqrt(dt) +
+            0.5 * sigma * sigma * (Z * Z - 1.0) * dt);
+}
+
+template <typename T, typename Opt, typename Step>
+void MonteCarlo<T, Opt, Step>::setNumPaths(std::size_t numPaths)
+{
+    _numPaths = numPaths;
+}
+
+template <typename T, typename Opt, typename Step>
+void MonteCarlo<T, Opt, Step>::useAntitheticVariates(bool useAV)
+{
+    _useAV = useAV;
+}
+
+template <typename T, typename Opt, typename Step>
+void MonteCarlo<T, Opt, Step>::useControlVariates(bool useCV)
+{
+    _useCV = useCV;
+}
+
+// template <typename T, typename Opt, typename Step>
+// MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, std::size_t numPaths)
+// {
+//     // Implement the terminal price calculation using the option and stepper
+//     if (optionType != "call" && optionType != "put")
+//         throw std::invalid_argument("Invalid option type");
+
+//     if (numPaths <= 1)
+//         throw std::invalid_argument("Number of paths must be >= 2");
+    
+//     _option.setType(optionType);
+//     const double phi = (optionType == "call") ? 1.0 : -1.0;
+
+//     setNumPaths(numPaths);
+
+//     auto payOffFun = _option.payOff(); // get the correct payoff according to the option type;
+
+//     // retrieve contract parameters
+//     const double S0       = _option.getSpotPrice();
+//     const double K        = _option.getStrikePrice();
+//     const double r        = _option.getRiskFreeRate();
+//     const double sigma    = _option.getVolatility();
+//     const double maturity = _option.getMaturityTime();
+
+//     // time discretisation 
+//     const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
+
+//     std::cout << "\nRunning Naive Monte Carlo with " << _stepper.getName() << " for " << numPaths << " paths and " << numSteps << " time steps...\n";
+
+//     const double dt = maturity / static_cast<double>(numSteps);
+//     const double sqrtDt = std::sqrt(dt);
+
+//      _stride = numSteps + 1; // stride is the number of time steps + 1 for the initial price
+//     _pricePaths_flat.resize(numPaths * _stride, 0.0); 
+
+//     // accumulator variables 
+//     double sum = 0.0;
+//     double sum2 = 0.0;
+
+//     for (std::size_t i = 0; i < numPaths; ++i)
+//     {
+//         const std::size_t base = i * _stride;
+//         double S = S0; // initial price
+//         _pricePaths_flat[base] = S0;
+
+//         for (std::size_t j = 1; j < _stride; ++j)
+//         {
+//             S = _stepper.advance(S, r, sigma, dt);
+//             _pricePaths_flat[base + j] = S;
+//         }
+
+//         const double discPayOff = std::exp(-r * maturity) * payOffFun(S);
+//         sum += discPayOff;
+//         sum2 += discPayOff * discPayOff;
+//     }
+
+//     const double mean = sum / static_cast<double>(numPaths);
+//     const double variance = (sum2  - static_cast<double>(numPaths) * (mean * mean)) / (static_cast<double>(numPaths) - 1.0); // unbiased
+//     const double stdDev = std::sqrt(variance )/ std::sqrt(static_cast<double>(numPaths));
+
+//     return {mean, variance, stdDev};
+// }
+
+// // Pricing
+// template <typename T, typename Opt, typename Step>
+// MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, std::size_t numPaths)
+// {
+//     if (optionType != "call" && optionType != "put")
+//         throw std::invalid_argument("Invalid option type");
+//     if (numPaths <= 1)
+//         throw std::invalid_argument("Number of paths must be >= 2");
+
+//     _option.setType(optionType);
+//     setNumPaths(numPaths);
+
+//     auto payOffFun = _option.payOff();
+
+//     // Contract params
+//     const T S0       = _option.getSpotPrice();
+//     const T r        = _option.getRiskFreeRate();
+//     const T sigma    = _option.getVolatility();
+//     const T maturity = _option.getMaturityTime();
+
+//     // Time grid
+//     const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
+//     const T dt = maturity / static_cast<T>(numSteps);
+
+//     // std::cout << "\nRunning Full Path Monte Carlo with " << _stepper.getName()
+//     //           << " for " << numPaths << " paths and " << numSteps << " time steps..."
+//     //           << "  [AV=" << std::boolalpha << _useAV << ", CV=" << _useCV << "]\n";
+
+//     _stride = numSteps + 1;
+//     _pricePaths_flat.resize(numPaths * _stride, T(0));
+
+//     // Accumulators
+//     // Y = discounted payoff; X = discounted S_T (control variate)
+//     long N = 0;
+//     T sumY = 0, sumY2 = 0;
+//     T sumX = 0, sumX2 = 0;
+//     T sumXY = 0;
+
+//     const T disc = std::exp(-r * maturity);
+
+//     if (_useAV) {
+//         const std::size_t half = numPaths / 2;
+//         for (std::size_t i = 0; i < half; ++i) {
+//             // Path 1
+//             T S1 = S0;
+//             const std::size_t base1 = (2*i) * _stride;
+//             _pricePaths_flat[base1 + 0] = S1;
+
+//             // Path 2 (antithetic)
+//             T S2 = S0;
+//             const std::size_t base2 = (2*i + 1) * _stride;
+//             _pricePaths_flat[base2 + 0] = S2;
+
+//             for (std::size_t j = 1; j <= numSteps; ++j) {
+//                 const T Z = static_cast<T>(standard_normal_sample());
+//                 S1 = _stepper.advanceWithZ(S1, r, sigma, dt, +Z);
+//                 S2 = _stepper.advanceWithZ(S2, r, sigma, dt, -Z);
+//                 _pricePaths_flat[base1 + j] = S1;
+//                 _pricePaths_flat[base2 + j] = S2;
+//             }
+
+//             const T Y1 = disc * payOffFun(S1);
+//             const T Y2 = disc * payOffFun(S2);
+
+//             sumY  += (Y1 + Y2);
+//             sumY2 += (Y1*Y1 + Y2*Y2);
+
+//             if (_useCV) {
+//                 const T X1 = disc * S1;  // E[X] = S0 under RN (exact for GBM)
+//                 const T X2 = disc * S2;
+//                 sumX  += (X1 + X2);
+//                 sumX2 += (X1*X1 + X2*X2);
+//                 sumXY += (Y1*X1 + Y2*X2);
+//             }
+//         }
+//         N = static_cast<long>(2 * half); // if odd numPaths, last is dropped for pairing
+//     } else {
+//         for (std::size_t i = 0; i < numPaths; ++i) {
+//             T S = S0;
+//             const std::size_t base = i * _stride;
+//             _pricePaths_flat[base + 0] = S;
+
+//             for (std::size_t j = 1; j <= numSteps; ++j) {
+//                 S = _stepper.advance(S, r, sigma, dt);
+//                 _pricePaths_flat[base + j] = S;
+//             }
+
+//             const T Y = disc * payOffFun(S);
+//             sumY  += Y;
+//             sumY2 += Y*Y;
+
+//             if (_useCV) {
+//                 const T X = disc * S;
+//                 sumX  += X;
+//                 sumX2 += X*X;
+//                 sumXY += Y*X;
+//             }
+//         }
+//         N = static_cast<long>(numPaths);
+//     }
+
+//     const T Nf = static_cast<T>(N);
+//     const T EY   = sumY / Nf;
+//     const T varY = (sumY2 - Nf * EY * EY) / (Nf - T(1));
+
+//     if (!_useCV) {
+//         return { EY, varY, std::sqrt(varY / Nf) };
+//     }
+
+//     // Control variate adjustment
+//     const T EX    = sumX / Nf;
+//     const T varX  = (sumX2 - Nf * EX * EX) / (Nf - T(1));
+//     const T covXY = (sumXY - Nf * EY * EX) / (Nf - T(1));
+
+//     const T beta    = (varX > T(0)) ? (covXY / varX) : T(0);
+//     const T EY_adj  = EY - beta * (EX - S0); // E[X] = S0
+//     const T var_adj = varY - ((varX > T(0)) ? (covXY * covXY / varX) : T(0));
+
+//     return { EY_adj, var_adj, std::sqrt(var_adj / Nf) };
+// }
+// ABOVE IS THE BEST SO FAR!
+
+// ---------- Full-path (discretized) Monte Carlo ----------
+template <typename T, typename Opt, typename Step>
+MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, std::size_t numPaths)
+{
+    if (optionType != "call" && optionType != "put")
+        throw std::invalid_argument("Invalid option type");
+    if (numPaths <= 1)
+        throw std::invalid_argument("Number of paths must be >= 2");
+
+    _option.setType(optionType);
+    setNumPaths(numPaths);
+
+    auto payOffFun = _option.payOff();
+
+    const T S0       = _option.getSpotPrice();
+    const T r        = _option.getRiskFreeRate();
+    const T sigma    = _option.getVolatility();
+    const T maturity = _option.getMaturityTime();
+    const T disc     = std::exp(-r * maturity);
+
+    // time grid
+    const std::size_t numSteps = std::max<std::size_t>(1, static_cast<std::size_t>(TRADING_DAYS_PER_YEAR * maturity));
+    const T dt = maturity / static_cast<T>(numSteps);
+
+    _stride = numSteps + 1;
+    _pricePaths_flat.resize(numPaths * _stride, T(0));
+
+    // No AV: identical to your current code (legs are i.i.d.)
+    if (!_useAV) {
+        long N = 0;
+        T sumY = 0, sumY2 = 0;
+        T sumX = 0, sumX2 = 0, sumXY = 0;
+
+        for (std::size_t i = 0; i < numPaths; ++i) {
+            T S = S0;
+            const std::size_t base = i * _stride;
+            _pricePaths_flat[base + 0] = S0;
+
+            for (std::size_t j = 1; j <= numSteps; ++j) {
+                S = _stepper.advance(S, r, sigma, dt);
+                _pricePaths_flat[base + j] = S;
+            }
+
+            const T Y = disc * payOffFun(S);
+            sumY  += Y;
+            sumY2 += Y*Y;
+
+            if (_useCV) {
+                const T X = disc * S;
+                sumX  += X;
+                sumX2 += X*X;
+                sumXY += Y*X;
+            }
+        }
+        N = static_cast<long>(numPaths);
+
+        const T Nf = static_cast<T>(N);
+        const T EY   = sumY / Nf;
+        const T varY = (sumY2 - Nf * EY * EY) / (Nf - T(1));
+
+        if (!_useCV) return { EY, varY, std::sqrt(varY / Nf) };
+
+        const T EX    = sumX / Nf;
+        const T varX  = (sumX2 - Nf * EX * EX) / (Nf - T(1));
+        const T covXY = (sumXY - Nf * EY * EX) / (Nf - T(1));
+
+        const T beta    = (varX > T(0)) ? (covXY / varX) : T(0);
+        const T EY_adj  = EY - beta * (EX - S0);
+        const T var_adj = varY - ((varX > T(0)) ? (covXY * covXY / varX) : T(0));
+
+        return { EY_adj, var_adj, std::sqrt(var_adj / Nf) };
+    }
+
+    // ===== AV branch: work with PAIRS =====
+    const std::size_t pairs = (numPaths / 2);
+    long Npairs = static_cast<long>(pairs);
+
+    T sumA = 0, sumA2 = 0;               // A = (Y1+Y2)/2
+    T sumXb = 0, sumXb2 = 0, sumAXb = 0; // Xb = (X1+X2)/2
+
+    for (std::size_t i = 0; i < pairs; ++i) {
+        // Path 1
+        T S1 = S0;
+        const std::size_t base1 = (2*i) * _stride;
+        _pricePaths_flat[base1 + 0] = S1;
+
+        // Path 2 (antithetic)
+        T S2 = S0;
+        const std::size_t base2 = (2*i + 1) * _stride;
+        _pricePaths_flat[base2 + 0] = S2;
+
+        for (std::size_t j = 1; j <= numSteps; ++j) {
+            const T Z = static_cast<T>(standard_normal_sample());
+            S1 = _stepper.advanceWithZ(S1, r, sigma, dt, +Z);
+            S2 = _stepper.advanceWithZ(S2, r, sigma, dt, -Z);
+            _pricePaths_flat[base1 + j] = S1;
+            _pricePaths_flat[base2 + j] = S2;
+        }
+
+        const T Y1 = disc * payOffFun(S1);
+        const T Y2 = disc * payOffFun(S2);
+        const T A  = (Y1 + Y2) * T(0.5);   // pair average
+
+        sumA  += A;
+        sumA2 += A*A;
+
+        if (_useCV) {
+            const T X1  = disc * S1;      // control variate per leg
+            const T X2  = disc * S2;
+            const T Xb  = (X1 + X2) * T(0.5); // pair-averaged CV
+
+            sumXb  += Xb;
+            sumXb2 += Xb*Xb;
+            sumAXb += A*Xb;
+        }
+    }
+
+    const T Nf = static_cast<T>(Npairs);
+    const T EA   = sumA / Nf;
+    const T varA = (sumA2 - Nf * EA * EA) / (Nf - T(1));
+
+    if (!_useCV) {
+        return { EA, varA, std::sqrt(varA / Nf) };
+    }
+
+    const T EXb   = sumXb / Nf;
+    const T varXb = (sumXb2 - Nf * EXb * EXb) / (Nf - T(1));
+    const T covAX = (sumAXb - Nf * EA * EXb) / (Nf - T(1));
+
+    const T beta    = (varXb > T(0)) ? (covAX / varXb) : T(0);
+    const T EA_adj  = EA - beta * (EXb - S0);                 // E[X]=S0
+    const T var_adj = varA - ((varXb > T(0)) ? (covAX * covAX / varXb) : T(0));
+
+    return { EA_adj, var_adj, std::sqrt(var_adj / Nf) };
+}
+
+// ---------- Terminal (single-step, exact GBM) ----------
+template <typename T, typename Opt, typename Step>
+MCReturn<T> MonteCarlo<T, Opt, Step>::priceTerminal(const std::string& optionType, std::size_t numPaths)
+{
+    if (optionType != "call" && optionType != "put")
+        throw std::invalid_argument("Invalid option type");
+    if (numPaths <= 1)
+        throw std::invalid_argument("Number of paths must be >= 2 for priceTerminal().");
+
+    _option.setType(optionType);
+    setNumPaths(numPaths);
+
+    const auto payOffFun = _option.payOff();
+    const T S0       = _option.getSpotPrice();
+    const T r        = _option.getRiskFreeRate();
+    const T sigma    = _option.getVolatility();
+    const T maturity = _option.getMaturityTime();
+    const T disc     = std::exp(-r * maturity);
+
+    if (!_useAV) {
+        long N = 0;
+        T sumY = 0, sumY2 = 0;
+        T sumX = 0, sumX2 = 0, sumXY = 0;
+
+        for (std::size_t i = 0; i < _numPaths; ++i) {
+            const T Z  = static_cast<T>(standard_normal_sample());
+            const T ST = _stepper.terminalDrawWithZ(S0, r, sigma, maturity, Z);
+
+            const T Y = disc * payOffFun(ST);
+            sumY  += Y;     sumY2 += Y*Y;
+
+            if (_useCV) {
+                const T X = disc * ST;
+                sumX  += X;  sumX2 += X*X;  sumXY += Y*X;
+            }
+        }
+        N = static_cast<long>(_numPaths);
+
+        const T Nf = static_cast<T>(N);
+        const T EY   = sumY / Nf;
+        const T varY = (sumY2 - Nf * EY * EY) / (Nf - T(1));
+
+        if (!_useCV) return { EY, varY, std::sqrt(varY / Nf) };
+
+        const T EX    = sumX / Nf;
+        const T varX  = (sumX2 - Nf * EX * EX) / (Nf - T(1));
+        const T covXY = (sumXY - Nf * EY * EX) / (Nf - T(1));
+
+        const T beta    = (varX > T(0)) ? (covXY / varX) : T(0);
+        const T EY_adj  = EY - beta * (EX - S0);
+        const T var_adj = varY - ((varX > T(0)) ? (covXY * covXY / varX) : T(0));
+
+        return { EY_adj, var_adj, std::sqrt(var_adj / Nf) };
+    }
+
+    // ===== AV branch: pairs =====
+    const std::size_t pairs = (_numPaths / 2);
+    long Npairs = static_cast<long>(pairs);
+
+    T sumA = 0, sumA2 = 0;
+    T sumXb = 0, sumXb2 = 0, sumAXb = 0;
+
+    for (std::size_t i = 0; i < pairs; ++i) {
+        const T Z   = static_cast<T>(standard_normal_sample());
+        const T ST1 = _stepper.terminalDrawWithZ(S0, r, sigma, maturity, +Z);
+        const T ST2 = _stepper.terminalDrawWithZ(S0, r, sigma, maturity, -Z);
+
+        const T Y1 = disc * payOffFun(ST1);
+        const T Y2 = disc * payOffFun(ST2);
+        const T A  = (Y1 + Y2) * T(0.5);
+
+        sumA  += A;
+        sumA2 += A*A;
+
+        if (_useCV) {
+            const T X1 = disc * ST1;
+            const T X2 = disc * ST2;
+            const T Xb = (X1 + X2) * T(0.5);
+
+            sumXb  += Xb;
+            sumXb2 += Xb*Xb;
+            sumAXb += A*Xb;
+        }
+    }
+
+    const T Nf = static_cast<T>(Npairs);
+    const T EA   = sumA / Nf;
+    const T varA = (sumA2 - Nf * EA * EA) / (Nf - T(1));
+
+    if (!_useCV) return { EA, varA, std::sqrt(varA / Nf) };
+
+    const T EXb   = sumXb / Nf;
+    const T varXb = (sumXb2 - Nf * EXb * EXb) / (Nf - T(1));
+    const T covAX = (sumAXb - Nf * EA * EXb) / (Nf - T(1));
+
+    const T beta    = (varXb > T(0)) ? (covAX / varXb) : T(0);
+    const T EA_adj  = EA - beta * (EXb - S0);
+    const T var_adj = varA - ((varXb > T(0)) ? (covAX * covAX / varXb) : T(0));
+
+    return { EA_adj, var_adj, std::sqrt(var_adj / Nf) };
+}
+
+
+// // Pricing with direct terminal sampling (single step, exact GBM)
+// template <typename T, typename Opt, typename Step>
+// MCReturn<T> MonteCarlo<T, Opt, Step>::priceTerminal(const std::string& optionType, std::size_t numPaths)
+// {
+//     // Validate inputs
+//     if (optionType != "call" && optionType != "put")
+//         throw std::invalid_argument("Invalid option type");
+//     if (numPaths <= 1)
+//         throw std::invalid_argument("Number of paths must be >= 2 for priceTerminal().");
+
+//     // Apply inputs to engine state
+//     _option.setType(optionType);
+//     setNumPaths(numPaths);
+
+//     // Get payoff and contract params
+//     const auto payOffFun = _option.payOff();
+//     const T S0       = _option.getSpotPrice();
+//     const T r        = _option.getRiskFreeRate();
+//     const T sigma    = _option.getVolatility();
+//     const T maturity = _option.getMaturityTime();
+//     const T disc     = std::exp(-r * maturity);
+
+//     // Accumulators: Y = disc * payoff(S_T), control variate X = disc * S_T (E[X]=S0)
+//     long N = 0;
+//     T sumY = T(0), sumY2 = T(0);
+//     T sumX = T(0), sumX2 = T(0), sumXY = T(0);
+
+//     if (_useAV) {
+//         const std::size_t half = _numPaths / 2;
+//         for (std::size_t i = 0; i < half; ++i) {
+//             const T Z   = static_cast<T>(standard_normal_sample());
+//             const T ST1 = gbm_ST(S0, r, sigma, maturity, +Z);
+//             const T ST2 = gbm_ST(S0, r, sigma, maturity, -Z);
+
+//             const T Y1 = disc * payOffFun(ST1);
+//             const T Y2 = disc * payOffFun(ST2);
+
+//             sumY  += (Y1 + Y2);
+//             sumY2 += (Y1*Y1 + Y2*Y2);
+
+//             if (_useCV) {
+//                 const T X1 = disc * ST1;   // E[X]=S0 under RN
+//                 const T X2 = disc * ST2;
+//                 sumX  += (X1 + X2);
+//                 sumX2 += (X1*X1 + X2*X2);
+//                 sumXY += (Y1*X1 + Y2*X2);
+//             }
+//         }
+//         N = static_cast<long>(2 * half); // drop last if odd for pairing
+//     } else {
+//         for (std::size_t i = 0; i < _numPaths; ++i) {
+//             const T Z  = static_cast<T>(standard_normal_sample());
+//             const T ST = gbm_ST(S0, r, sigma, maturity, Z);
+
+//             const T Y = disc * payOffFun(ST);
+//             sumY  += Y;
+//             sumY2 += Y*Y;
+
+//             if (_useCV) {
+//                 const T X = disc * ST;
+//                 sumX  += X;
+//                 sumX2 += X*X;
+//                 sumXY += Y*X;
+//             }
+//         }
+//         N = static_cast<long>(_numPaths);
+//     }
+
+//     const T Nf   = static_cast<T>(N);
+//     const T EY   = sumY / Nf;
+//     const T varY = (sumY2 - Nf * EY * EY) / (Nf - T(1));
+
+//     if (!_useCV) {
+//         return { EY, varY, std::sqrt(varY / Nf) };
+//     }
+
+//     // Control variate adjustment with X = disc * S_T and E[X]=S0
+//     const T EX    = sumX / Nf;
+//     const T varX  = (sumX2 - Nf * EX * EX) / (Nf - T(1));
+//     const T covXY = (sumXY - Nf * EY * EX) / (Nf - T(1));
+
+//     const T beta    = (varX > T(0)) ? (covXY / varX) : T(0);
+//     const T EY_adj  = EY - beta * (EX - S0);
+//     const T var_adj = varY - ((varX > T(0)) ? (covXY * covXY / varX) : T(0));
+
+//     return { EY_adj, var_adj, std::sqrt(var_adj / Nf) };
+// }
+
+// // ------ Terminal (exact) pricing: now uses Step::terminalDraw ------
+// template <typename T, typename Opt, typename Step>
+// MCReturn<T> MonteCarlo<T, Opt, Step>::priceTerminal(const std::string& optionType, std::size_t numPaths)
+// {
+//     if (optionType != "call" && optionType != "put")
+//         throw std::invalid_argument("Invalid option type");
+//     if (numPaths <= 1)
+//         throw std::invalid_argument("Number of paths must be >= 2 for priceTerminal().");
+
+//     _option.setType(optionType);
+//     setNumPaths(numPaths);
+
+//     const auto payOffFun = _option.payOff();
+//     const T S0       = _option.getSpotPrice();
+//     const T r        = _option.getRiskFreeRate();
+//     const T sigma    = _option.getVolatility();
+//     const T maturity = _option.getMaturityTime();
+//     const T disc     = std::exp(-r * maturity);
+
+//     long N = 0;
+//     T sumY = T(0), sumY2 = T(0);
+//     T sumX = T(0), sumX2 = T(0), sumXY = T(0);
+
+//     if (_useAV) {
+//         // Antithetic flag keeps pair-wise accumulation. We still draw via stepper twice.
+//         const std::size_t half = _numPaths / 2;
+//         for (std::size_t i = 0; i < half; ++i) {
+//             const T Z = static_cast<T>(standard_normal_sample());
+//             const T ST1 = _stepper.terminalDrawWithZ(S0, r, sigma, maturity, Z);
+//             const T ST2 = _stepper.terminalDrawWithZ(S0, r, sigma, maturity, -Z);
+
+//             const T Y1 = disc * payOffFun(ST1);
+//             const T Y2 = disc * payOffFun(ST2);
+
+//             sumY  += (Y1 + Y2);
+//             sumY2 += (Y1*Y1 + Y2*Y2);
+
+//             if (_useCV) {
+//                 const T X1 = disc * ST1;
+//                 const T X2 = disc * ST2;
+//                 sumX  += (X1 + X2);
+//                 sumX2 += (X1*X1 + X2*X2);
+//                 sumXY += (Y1*X1 + Y2*X2);
+//             }
+//         }
+//         N = static_cast<long>(2 * half);
+//     } else {
+//         for (std::size_t i = 0; i < _numPaths; ++i) {
+//             const T ST = _stepper.terminalDraw(S0, r, sigma, maturity);
+
+//             const T Y = disc * payOffFun(ST);
+//             sumY  += Y;
+//             sumY2 += Y*Y;
+
+//             if (_useCV) {
+//                 const T X = disc * ST;
+//                 sumX  += X;
+//                 sumX2 += X*X;
+//                 sumXY += Y*X;
+//             }
+//         }
+//         N = static_cast<long>(_numPaths);
+//     }
+
+//     const T Nf   = static_cast<T>(N);
+//     const T EY   = sumY / Nf;
+//     const T varY = (sumY2 - Nf * EY * EY) / (Nf - T(1));
+
+//     if (!_useCV) {
+//         return { EY, varY, std::sqrt(varY / Nf) };
+//     }
+
+//     const T EX    = sumX / Nf;
+//     const T varX  = (sumX2 - Nf * EX * EX) / (Nf - T(1));
+//     const T covXY = (sumXY - Nf * EY * EX) / (Nf - T(1));
+
+//     const T beta    = (varX > T(0)) ? (covXY / varX) : T(0);
+//     const T EY_adj  = EY - beta * (EX - S0); // E[X] = S0
+//     const T var_adj = varY - ((varX > T(0)) ? (covXY * covXY / varX) : T(0));
+
+//     return { EY_adj, var_adj, std::sqrt(var_adj / Nf) };
+// }
+
+
 template class Option<double>;
 template class EuropeanOption<double>;
+template class GBM<double>;
+template class MonteCarlo<double, EuropeanOption<double>, GBM<double>>;
+template class Euler<double>;
+template class MonteCarlo<double, EuropeanOption<double>, Euler<double>>;
+template class Milstein<double>;
+template class MonteCarlo<double, EuropeanOption<double>, Milstein<double>>;
