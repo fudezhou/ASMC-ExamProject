@@ -61,6 +61,20 @@ inline T gbm_ST (T S0, T r, T sigma, T maturity, T Z)
 //     return dist(rng);
 // }
 
+// === NEW: small helper for log–log slope (kept header-only) ===
+inline double slope_loglog_xy(const std::vector<double>& x,
+                              const std::vector<double>& y)
+{
+    const int n = static_cast<int>(x.size());
+    double Sx=0, Sy=0, Sxx=0, Sxy=0;
+    for (int i=0;i<n;++i) {
+        const double lx = std::log(x[i]);
+        const double ly = std::log(y[i]);
+        Sx+=lx; Sy+=ly; Sxx+=lx*lx; Sxy+=lx*ly;
+    }
+    return (n*Sxy - Sx*Sy) / (n*Sxx - Sx*Sx);
+}
+
 template <typename T>
 class Option { // base class for all options
 public: 
@@ -214,6 +228,28 @@ public:
     virtual const char *getName() const override { return "Milstein"; }
 };
 
+// ---------- Convergence statistics ----------
+struct StrongStats {
+    double meanAbs;  // E[ |S*_T - S^h_T| ]
+    double rms;      // sqrt( E[ (S*_T - S^h_T)^2 ] )
+    double seAbs;    // std error of meanAbs
+};
+
+struct WeakStats {
+    double bias;       // | E[g(S^h_T)] - E[g(S*_T)] |
+    double seBias;     // std error of the mean of D = g(S^h_T) - g(S*_T)
+    double meanApprox; // E[g(S^h_T)] estimate
+    double meanExact;  // E[g(S*_T)] estimate
+};
+
+// === NEW: MC statistical convergence result ===
+struct MCStatConvergence {
+    std::vector<std::size_t> Ns;   // path counts
+    std::vector<double> prices;    // MC prices (per N)
+    std::vector<double> stdErrs;   // reported standard errors (per N)
+    double slope_loglog = 0.0;     // slope of log(SE) vs log(N), expect ≈ -0.5
+};
+
 template <typename T, typename Opt, typename Step>
 class MonteCarlo {
 public:
@@ -232,6 +268,15 @@ public:
     MCReturn<T> priceTerminal(const std::string& optionType, std::size_t numPaths);
     // NEW SIGNATURE: full path Monte Carlo using stepper
     MCReturn<T> pricePath(const std::string& optionType, std::size_t numPaths);
+
+    StrongStats strongErrorOnState(std::size_t numPaths, std::size_t numSteps);
+
+    WeakStats weakErrorOnPayoff(const std::string& optionType, std::size_t numPaths, std::size_t numSteps);
+
+    MCStatConvergence statisticalConvergenceByPaths(const std::string& optionType,
+                                                const std::vector<std::size_t>& Ns,
+                                                bool useAV=false,
+                                                bool useCV=false);
 
 private: 
     Opt& _option; // reference to the option

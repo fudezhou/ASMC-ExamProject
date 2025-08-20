@@ -362,6 +362,153 @@ MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, s
 }
 */
 
+// ---------- Strong error on STATE vs exact GBM (CRN) ----------
+template <typename T, typename Opt, typename Step>
+StrongStats MonteCarlo<T, Opt, Step>::strongErrorOnState(std::size_t numPaths,
+                                                         std::size_t numSteps)
+{
+    if (numPaths <= 1) throw std::invalid_argument("numPaths >= 2");
+    if (numSteps == 0) throw std::invalid_argument("numSteps >= 1");
+
+    const T S0   = _option.getSpotPrice();
+    const T r    = _option.getRiskFreeRate();
+    const T sig  = _option.getVolatility();
+    const T Tmat = _option.getMaturityTime();
+    const T dt   = Tmat / static_cast<T>(numSteps);
+
+    // No AV/CV here by design
+    T sumAbs = 0, sumAbs2 = 0, sumSq = 0;
+
+    for (std::size_t i = 0; i < numPaths; ++i) {
+        T S  = S0;  // approximate path terminal
+        T WT = 0;   // to build exact terminal from SAME shocks (A shock is
+                    // a standard normal sample, Z)
+
+        for (std::size_t j = 0; j < numSteps; ++j) {
+            const T Z = static_cast<T>(standard_normal_sample());
+            S  = _stepper.advanceWithZ(S, r, sig, dt, Z);
+            WT += std::sqrt(dt) * Z;
+        }
+        const T Sexact = S0 * std::exp((r - T(0.5)*sig*sig)*Tmat + sig*WT);
+
+        const T diff  = Sexact - S;
+        const T adiff = std::fabs(diff);
+
+        sumAbs  += adiff; // absolute error
+        sumAbs2 += adiff*adiff; // squared absolute error
+        sumSq   += diff*diff; // squared error
+    }
+
+    const T Nf     = static_cast<T>(numPaths); // number of paths
+    const T meanAbs= sumAbs / Nf; // mean absolute error
+    const T varAbs = (sumAbs2 - Nf * meanAbs * meanAbs) / (Nf - T(1)); // variance of absolute error
+    const T seAbs  = std::sqrt( varAbs / Nf ); // standard error of absolute error
+    const T rms    = std::sqrt( sumSq / Nf ); // root mean square error
+
+    return { static_cast<double>(meanAbs),
+             static_cast<double>(rms),
+             static_cast<double>(seAbs) };
+}
+
+// ---------- Weak error (payoff bias) vs exact GBM (CRN) ----------
+template <typename T, typename Opt, typename Step>
+WeakStats MonteCarlo<T, Opt, Step>::weakErrorOnPayoff(const std::string& optionType,
+                                                      std::size_t numPaths,
+                                                      std::size_t numSteps)
+{
+    if (optionType != "call" && optionType != "put")
+        throw std::invalid_argument("Invalid option type");
+    if (numPaths <= 1) throw std::invalid_argument("numPaths >= 2");
+    if (numSteps == 0) throw std::invalid_argument("numSteps >= 1");
+
+    _option.setType(optionType);
+
+    const auto g  = _option.payOff();
+    const T S0    = _option.getSpotPrice();
+    const T r     = _option.getRiskFreeRate();
+    const T sig   = _option.getVolatility();
+    const T Tmat  = _option.getMaturityTime();
+    const T dt    = Tmat / static_cast<T>(numSteps);
+    const T disc  = std::exp(-r * Tmat);
+
+    // No AV/CV here by design
+    T sumYh = 0, sumYh2 = 0;
+    T sumYs = 0, sumYs2 = 0;
+    T sumD  = 0, sumD2  = 0;
+
+    for (std::size_t i = 0; i < numPaths; ++i) {
+        T S  = S0;  // approximate terminal
+        T WT = 0;   // exact via same shocks
+
+        for (std::size_t j = 0; j < numSteps; ++j) {
+            const T Z = static_cast<T>(standard_normal_sample());
+            S  = _stepper.advanceWithZ(S, r, sig, dt, Z);
+            WT += std::sqrt(dt) * Z;
+        }
+        const T Sexact = S0 * std::exp((r - T(0.5)*sig*sig)*Tmat + sig*WT);
+
+        const T Yh = disc * g(S);
+        const T Ys = disc * g(Sexact);
+        const T D  = Yh - Ys;
+
+        sumYh += Yh; sumYh2 += Yh*Yh;
+        sumYs += Ys; sumYs2 += Ys*Ys;
+        sumD  += D;  sumD2  += D*D;
+    }
+
+    const T Nf    = static_cast<T>(numPaths);
+    const T EYh   = sumYh / Nf;
+    const T EYs   = sumYs / Nf;
+    const T ED    = sumD  / Nf;
+    const T varD  = (sumD2 - Nf * ED * ED) / (Nf - T(1));
+    const T seD   = std::sqrt( varD / Nf );
+
+    WeakStats out;
+    out.bias       = std::fabs(static_cast<double>(ED));
+    out.seBias     = static_cast<double>(seD);
+    out.meanApprox = static_cast<double>(EYh);
+    out.meanExact  = static_cast<double>(EYs);
+    return out;
+}
+
+// === NEW: Stepper-agnostic statistical convergence via pricePath ===
+template <typename T, typename Opt, typename Step>
+MCStatConvergence
+MonteCarlo<T, Opt, Step>::statisticalConvergenceByPaths(const std::string& optionType,
+                                                        const std::vector<std::size_t>& Ns,
+                                                        bool useAV,
+                                                        bool useCV)
+{
+    // Configure VR flags locally for the study
+    this->useAntitheticVariates(useAV);
+    this->useControlVariates(useCV);
+
+    MCStatConvergence out;
+    out.Ns = Ns;
+    out.prices.resize(Ns.size());
+    out.stdErrs.resize(Ns.size());
+
+    std::vector<double> xN; xN.reserve(Ns.size());
+    std::vector<double> se; se.reserve(Ns.size());
+
+    for (std::size_t i = 0; i < Ns.size(); ++i) {
+        const std::size_t N = Ns[i];
+
+        // pricePath works for ANY stepper (GBM/Euler/Milstein); it internally sets a daily grid.
+        auto r = this->pricePath(optionType, N);
+
+        out.prices[i] = static_cast<double>(r.price);
+        out.stdErrs[i]= static_cast<double>(r.stdDev);
+
+        xN.push_back(static_cast<double>(N));
+        se.push_back(out.stdErrs[i]);
+    }
+
+    // Expect ~ -0.5
+    out.slope_loglog = slope_loglog_xy(xN, se);
+    return out;
+}
+
 // ---------- Full-path (discretized) Monte Carlo ----------
 template <typename T, typename Opt, typename Step>
 MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, std::size_t numPaths)
@@ -414,7 +561,7 @@ MCReturn<T> MonteCarlo<T, Opt, Step>::pricePath(const std::string& optionType, s
 
             if (_useCV) {
                 // Perfect CV from the SAME shocks
-                const T ST_exact = S0 * std::exp((r - T(0.5)*sigma*sigma)*Tmat + sigma*WT);
+                const T ST_exact = S0 * std::exp((r - T(0.5)*sigma*sigma)*Tmat + sigma*WT); // I know exact ST under GBM
                 const T X = disc * ST_exact; // E[X] = S0 exactly
                 sumX  += X;  sumX2 += X*X;  sumXY += Y*X;
             }
@@ -889,3 +1036,5 @@ template class Euler<double>;
 template class MonteCarlo<double, EuropeanOption<double>, Euler<double>>;
 template class Milstein<double>;
 template class MonteCarlo<double, EuropeanOption<double>, Milstein<double>>;
+
+

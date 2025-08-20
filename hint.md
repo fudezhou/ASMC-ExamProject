@@ -1324,3 +1324,424 @@ Since you assume no closed form and want to simulate:
 
 👉 Do you want me to write this as a **checklist of inputs for an actual Monte Carlo pricer** (like a constructor signature)? That might be most useful for your project.
 
+Great—here’s the math you need, step‑by‑step, to justify and build a Crank–Nicolson (CN) solver for European options under your stated Black–Scholes (BS) assumptions.
+
+# 1) From GBM to the pricing PDE (why a PDE exists and is unique)
+
+**Assumptions (your framework):** frictionless markets, continuous trading, constant $r,\sigma$, no dividends ($q=0$), risk‑neutral measure $\mathbb{Q}$.
+
+Under $\mathbb{Q}$:
+
+$$
+dS_t = r S_t\,dt + \sigma S_t\, dW_t .
+$$
+
+For a European payoff $\Phi(S_T)$, the no‑arbitrage price is the risk‑neutral expectation
+
+$$
+V(S,t)=\mathbb{E}^{\mathbb{Q}}\!\left[e^{-r(T-t)}\,\Phi(S_T)\,\middle|\,S_t=S\right].
+$$
+
+By **Feynman–Kac**, $V$ is the **unique** classical solution (with sufficient regularity) to the linear parabolic PDE
+
+$$
+\boxed{\;V_t + \tfrac12\sigma^2 S^2 V_{SS} + r S V_S - r V = 0,\qquad (S>0,\ 0\le t<T)\;}
+$$
+
+with terminal condition $V(S,T)=\Phi(S)$. This is the continuous object CN will approximate.
+
+# 2) Domain truncation and boundary/terminal data
+
+You solve on a truncated strip $[0,S_{\max}]\times[0,T]$.
+
+* **Terminal condition (at $t=T$)**
+  Call: $V(S,T)=\max(S-K,0)$.
+  Put:  $V(S,T)=\max(K-S,0)$.
+
+* **Boundary conditions (Dirichlet, no dividends)**
+  As $S\downarrow 0$:
+  Call $\to 0$ ⇒ $V(0,t)=0$.
+  Put  $\to K e^{-r(T-t)}$ ⇒ $V(0,t)=K\,e^{-r(T-t)}$.
+
+  As $S\to\infty$: linear asymptotes
+  Call $V\sim S - K e^{-r(T-t)}$ ⇒ set $V(S_{\max},t)=S_{\max} - K e^{-r(T-t)}$.
+  Put  $V\sim 0$ ⇒ $V(S_{\max},t)=0$.
+
+Pick $S_{\max}$ big enough (e.g. $3S_0$–$5S_0$ or $4K$) so the truncation error is negligible.
+
+# 3) Space–time grid and discrete differential operator
+
+Uniform grid in $S$: $S_i=i\,\Delta S,\ i=0,\dots,M$ with $\Delta S=S_{\max}/M$.
+Uniform grid in time (we step **backward**): $t_n = n\,\Delta t,\ n=0,\dots,N$ with $\Delta t = T/N$.
+Let $V_i^n \approx V(S_i, t_n)$.
+
+Discretize **spatial derivatives** at interior nodes $i=1,\dots,M-1$ with **centered differences**:
+
+$$
+V_S \approx \frac{V_{i+1}^n - V_{i-1}^n}{2\Delta S},\qquad
+V_{SS} \approx \frac{V_{i+1}^n - 2V_i^n + V_{i-1}^n}{\Delta S^2}.
+$$
+
+Define the discrete **BS operator** $L$ acting on the spatial index $i$ (at a fixed time level) by
+
+$$
+(LV)_i = \alpha_i V_{i-1} + \beta_i V_i + \gamma_i V_{i+1},
+$$
+
+with coefficients (plug $S_i=i\Delta S$):
+
+$$
+\boxed{
+\begin{aligned}
+\alpha_i &= \tfrac12\sigma^2 \frac{S_i^2}{\Delta S^2} - \tfrac12 r \frac{S_i}{\Delta S}
+         = \tfrac12\sigma^2 i^2 - \tfrac12 r i,\\[2pt]
+\beta_i  &= -\sigma^2 \frac{S_i^2}{\Delta S^2}-r
+         = -\sigma^2 i^2 - r,\\[2pt]
+\gamma_i &= \tfrac12\sigma^2 \frac{S_i^2}{\Delta S^2} + \tfrac12 r \frac{S_i}{\Delta S}
+         = \tfrac12\sigma^2 i^2 + \tfrac12 r i.
+\end{aligned}}
+$$
+
+# 4) Crank–Nicolson time stepping (why it’s good)
+
+The continuous PDE can be written $V_t + L V = 0$. The **Crank–Nicolson** (CN) update from $t_{n+1}$ to $t_n$ (backward in time) is:
+
+$$
+\frac{V^n - V^{n+1}}{\Delta t} + \tfrac12\big(LV^n + LV^{n+1}\big) = 0
+\quad\Longleftrightarrow\quad
+\boxed{\;(I - \tfrac12\Delta t\,L)\,V^n = (I + \tfrac12\Delta t\,L)\,V^{n+1}.}
+$$
+
+Properties:
+
+* **Second‑order accurate** in both time and space (with the centered stencil): $O(\Delta t^2+\Delta S^2)$.
+* **A‑stable** (unconditionally stable for linear parabolic PDEs), so you can take reasonably large $\Delta t$ without blow‑ups.
+* Symmetric in time (midpoint rule), which reduces time‑discretization bias vs. pure implicit/explicit schemes.
+
+# 5) Tridiagonal linear system (the exact coefficients you’ll code)
+
+Writing the CN equation at node $i=1,\dots,M-1$ and grouping terms gives:
+
+$$
+- A_i\,V_{i-1}^n + (1 - B_i)\,V_i^n - C_i\,V_{i+1}^n
+= A_i\,V_{i-1}^{n+1} + (1 + B_i)\,V_i^{n+1} + C_i\,V_{i+1}^{n+1},
+$$
+
+with
+
+$$
+\boxed{\;A_i=\tfrac12\Delta t\,\alpha_i,\quad B_i=\tfrac12\Delta t\,\beta_i,\quad C_i=\tfrac12\Delta t\,\gamma_i.}
+$$
+
+Using the $\alpha_i,\beta_i,\gamma_i$ above, that is
+
+$$
+A_i = \tfrac14\Delta t(\sigma^2 i^2 - r i),\quad
+B_i = -\tfrac12\Delta t(\sigma^2 i^2 + r),\quad
+C_i = \tfrac14\Delta t(\sigma^2 i^2 + r i).
+$$
+
+This yields a **tri‑diagonal** system for the interior vector $V^n_{1:M-1}$:
+
+$$
+\underbrace{\begin{bmatrix}
+1-B_1 & -C_1 &        &        \\
+-A_2  & 1-B_2& -C_2   &        \\
+      & \ddots&\ddots & \ddots \\
+      &       & -A_{M-1}& 1-B_{M-1}
+\end{bmatrix}}_{\text{LHS}}
+\!
+\begin{bmatrix}V_1^n\\ V_2^n\\ \vdots\\ V_{M-1}^n\end{bmatrix}
+=
+\underbrace{\begin{bmatrix}
+A_1 V_0^{n+1} + (1+B_1)V_1^{n+1} + C_1 V_2^{n+1}\\
+\vdots\\
+A_{M-2} V_{M-3}^{n+1} + (1+B_{M-2})V_{M-2}^{n+1} + C_{M-2}V_{M-1}^{n+1}\\
+A_{M-1} V_{M-2}^{n+1} + (1+B_{M-1})V_{M-1}^{n+1} + C_{M-1} V_M^{n+1}
+\end{bmatrix}}_{\text{RHS, known at step }n+1},
+$$
+
+where the boundary values $V_0^n, V_M^n$ (Dirichlet) are injected into the RHS at each step.
+
+Solve this tridiagonal system (Thomas algorithm) to obtain $V^n$ from $V^{n+1}$.
+
+# 6) Algorithm (end‑to‑end)
+
+1. **Grid & coefficients:** choose $M,N,S_{\max}$, compute $\Delta S,\Delta t$, precompute $A_i,B_i,C_i$ for $i=1\dots M-1$.
+2. **Initialize at maturity:** set $V_i^{N}=\Phi(S_i)$ for all $i$; set $V_0^{N},V_M^{N}$ with boundary formulas at $t=T$ (they match payoff).
+3. **Backward time loop:** for $n=N-1,N-2,\dots,0$
+
+   * Set boundary values $V_0^n, V_M^n$ using the **time‑dependent** Dirichlet conditions (they include $e^{-r(T-t_n)}$).
+   * Assemble **RHS** from $V^{n+1}$ (and add the boundary contributions $A_1 V_0^n$, $C_{M-1}V_M^n$).
+   * Solve the **tridiagonal** system for $V_{1:M-1}^n$.
+4. **Interpolate** $V(S_0,0)$ from the grid (linear or higher‑order). Greeks from centered differences:
+
+   $$
+   \Delta \approx \frac{V_{i+1}^0-V_{i-1}^0}{2\Delta S},\quad
+   \Gamma \approx \frac{V_{i+1}^0-2V_i^0+V_{i-1}^0}{\Delta S^2}.
+   $$
+
+# 7) Why CN “works” here (theoretical justification)
+
+* The BS PDE is **linear parabolic** with smooth, bounded coefficients on the truncated strip; Feynman–Kac guarantees the PDE solution equals the risk‑neutral price.
+* CN with centered space differences is **consistent** with the PDE (local truncation error $O(\Delta t^2+\Delta S^2)$), **A‑stable** (no CFL restriction), and the discrete operator is **M‑matrix‑like** for sufficiently fine grids (helps preserve monotonicity/no‑arbitrage numerically).
+* With appropriate $S_{\max}$ and grid resolution (often non‑uniform grids concentrate points near $K$ for sharper Greeks), the CN solution **converges** to the BS value as $\Delta S,\Delta t\to 0$.
+
+**Practical tip:** because the terminal payoff has a kink (non‑smooth at $S=K$), CN can show tiny oscillations for large $\Delta t$. A standard remedy is **Rannacher smoothing** (replace the first CN step by two half‑steps of fully implicit Euler). It preserves second‑order convergence thereafter.
+
+---
+
+That’s the full mathematical story: starting at the risk‑neutral expectation, Feynman–Kac ⇒ PDE, then CN discretization ⇒ a stable, second‑order, tridiagonal linear solve each time step. If you want, I can now map each boxed formula directly to coefficient names and lines in a minimal `PDE` class for your codebase.
+
+
+Great, I’ve looked **very carefully** at your code base (`utilities.hpp/.cpp`, `main.cpp`). Let’s connect it to the theoretical excerpt you pasted.
+
+---
+
+## 1. Theoretical background recap
+
+We’re dealing with the linear SDE:
+
+$$
+dX_t = \alpha X_t \,dt + \beta X_t \, dW_t
+$$
+
+* **Exact solution (strong solution)**
+
+  $$
+  X_t = X_0 \exp\!\left[\Big(\alpha - \tfrac12\beta^2\Big)t + \beta W_t\right].
+  $$
+
+* **Strong vs weak error**
+
+  * **Strong convergence** cares about **pathwise accuracy**:
+
+    $$
+    \epsilon(h) = \mathbb{E}\!\left[|X_T - y_T^h|\right] = O(h^\gamma).
+    $$
+
+    i.e. how close the simulated trajectory is to the true one, for the same Brownian path.
+  * **Weak convergence** cares about **distributional accuracy**:
+
+    $$
+    |\,\mathbb{E}[g(X_T)] - \mathbb{E}[g(y_T^h)]\,| = O(h^\beta).
+    $$
+
+    i.e. expectations of functions (payoffs, moments) are correct, even if paths are not.
+
+---
+
+## 2. How this relates to your code
+
+Looking at your repo:
+
+* In `utilities.cpp` you have **steppers**:
+
+  * `GBM::advance()` → uses the **exact discrete-time law** of the GBM increment (so exact strong solution at the step level).
+  * `Euler::advance()` → implements **Euler–Maruyama**:
+
+    $$
+    S_{t+dt} = S_t (1 + r\,dt + \sigma Z \sqrt{dt})
+    $$
+
+    Strong order $\gamma = 0.5$.
+  * `Milstein::advance()` → Euler plus correction term $\tfrac12\sigma^2(Z^2-1)dt$.
+    Strong order $\gamma = 1.0$.
+
+* In `MonteCarlo::pricePath()` you simulate paths step by step using whichever stepper is chosen (GBM/Euler/Milstein).
+
+  * Then you compute option payoffs, average them, possibly apply variance reduction (AV, CV).
+  * This is **exactly the framework** where the definitions of strong and weak convergence apply.
+
+* In `MonteCarlo::priceTerminal()` you bypass stepping altogether:
+
+  * Directly call `Step::terminalDraw()` → exact closed-form sampling at maturity $T$.
+  * Here the approximation error is **zero** (since GBM law is exactly sampled).
+
+So:
+
+* **Euler/Milstein steppers** correspond to *numerical approximations* where strong/weak convergence order matters.
+* **GBM (exact)** corresponds to the *reference solution*—no numerical discretization error, only Monte Carlo sampling error.
+
+---
+
+## 3. Why use Euler/Milstein if we already have exact GBM?
+
+This is the key point you asked.
+
+👉 In your framework, for **vanilla Black–Scholes GBM**, you *do know* the exact dynamics, so `terminalDraw()` is enough. Euler/Milstein seem pointless.
+
+But in **general SDEs**:
+
+* For many processes (e.g. Heston, SABR, local volatility, stochastic interest rates), **no closed-form transition density** is available.
+* You can’t do a one-step `terminalDraw()` because the exact distribution of $X_T$ is unknown.
+* Then you **must discretize** the SDE:
+
+  * Euler–Maruyama (simplest, strong order 0.5).
+  * Milstein (better pathwise accuracy, strong order 1.0, but needs derivative of diffusion term).
+
+So in practice:
+
+* **Exact GBM stepper** = used only for GBM (nice for benchmarking, validation, variance reduction).
+* **Euler/Milstein steppers** = *universal tools* for more complicated dynamics, where you don’t know the exact distribution.
+
+That’s why textbooks emphasize strong/weak convergence—they tell you *how fast* your approximation improves as you refine the timestep.
+
+---
+
+✅ **Summary, in your project terms**:
+
+* Your `Stepper` classes implement the **approximation scheme** in Definition 3.3/3.4.
+* `Euler` = strong order 0.5, `Milstein` = strong order 1.0, `GBM` = exact.
+* `MonteCarlo::pricePath` is the framework where you test these convergence properties.
+* `priceTerminal` with GBM is the “truth” for benchmarking.
+* Euler/Milstein are included because in real finance we rarely have an `exactGBM`—they prepare your codebase for general models.
+
+---
+
+Do you want me to also **map explicitly** which of your outputs (variance reduction tables, CI, etc.) correspond to **weak convergence diagnostics** vs **strong convergence diagnostics**?
+
+
+Exactly ✅ — you’ve got it.
+
+Let me unpack what that phrase means in practice:
+
+---
+
+### 1. **What “closed-form transition density” means**
+
+* The **transition density** is the probability law of the state variable $X_t$ at a later time, given its current value.
+  For GBM (Black–Scholes), it’s **Lognormal**:
+
+  $$
+  X_T \sim \text{Lognormal}\!\left(\ln S_0 + (r-\tfrac12\sigma^2)T,\; \sigma^2 T\right).
+  $$
+
+* This closed form allows you to do
+
+  ```cpp
+  ST = S0 * exp((r - 0.5*sigma^2)*T + sigma*sqrt(T)*Z);
+  ```
+
+  i.e. your `terminalDraw()`.
+
+* For more complex SDEs (Heston, SABR, local vol), the law of $X_T$ is **not known in closed form**. You can’t just plug in a formula.
+
+---
+
+### 2. **Why we can’t do a one-step terminalDraw**
+
+* If you don’t know the distribution of $X_T$, you **cannot sample directly at maturity**.
+* You only know the **dynamics** (the drift + diffusion coefficients of the SDE).
+* That forces you to **discretize time** into steps $\Delta t$ and build the path recursively using numerical schemes (Euler, Milstein, etc.).
+
+So yes:
+
+$$
+X_0 \;\to\; X_{\Delta t} \;\to\; X_{2\Delta t} \;\to\; \cdots \;\to\; X_T,
+$$
+
+each step being approximate.
+
+---
+
+### 3. **Link to strong/weak convergence**
+
+* The error of these approximations is measured by strong/weak convergence definitions.
+* Euler–Maruyama: strong order 0.5.
+* Milstein: strong order 1.0 (better pathwise accuracy).
+* For weak convergence (expectations like option prices), Euler already gives order 1.
+
+---
+
+### 4. **So, long story short**
+
+👉 Yes, **whenever you don’t know the exact distribution of $X_T$**, you must resort to **approximate stepping methods** (Euler/Milstein/etc.) to propagate the distribution from $0$ to $T$.
+
+That’s why your framework includes Euler and Milstein alongside exact GBM:
+
+* GBM = “benchmark with exact law”.
+* Euler/Milstein = “generic approximators for real models”.
+
+---
+
+Do you want me to show you **a concrete example with Heston** (where you cannot write `terminalDraw()` and must use Euler), so you can see how your stepper class would be extended beyond GBM?
+
+Here’s a concise “scope boundary” note you could paste into your report:
+
+---
+
+### Scope Boundary
+
+The numerical framework developed in this project is restricted to the **geometric Brownian motion (GBM)** dynamics of the Black–Scholes model. In this setting, the exact transition law of the underlying is available in closed form, which allows for direct terminal sampling without discretization error.
+
+The inclusion of **Euler–Maruyama** and **Milstein** steppers in the code serves a **benchmarking and pedagogical purpose**: they provide a way to study the notions of strong and weak convergence, and to compare approximate schemes against the exact GBM dynamics.
+
+Extending the framework to more complex stochastic models (e.g. Heston, SABR, local volatility, stochastic interest rates) would require handling multi-dimensional state variables, correlated Brownian motions, and the absence of closed-form transition densities. Such extensions are outside the scope of this project.
+
+---
+
+Do you want me to also prepare a **one-sentence version** you can drop into slides for your presentation?
+
+Exactly ✅ — you’ve nailed the distinction:
+
+---
+
+## 1. **Monte Carlo (sampling)**
+
+* You are approximating an *expectation* by a finite sample average.
+* The Monte Carlo estimator is **unbiased** (assuming no CV misuse etc.).
+* The error shows up as **variability** around the true expectation:
+
+  $$
+  \hat V_N = \frac{1}{N}\sum_{i=1}^N Y_i,\qquad
+  \text{Var}(\hat V_N) \sim \frac{\sigma^2}{N}.
+  $$
+* Convergence rate = $O(N^{-1/2})$.
+* This is **not a bias**, just noise that shrinks with more paths or variance reduction.
+
+👉 In your tables: the **95% CI width** is entirely Monte Carlo error.
+
+---
+
+## 2. **Stepper (time discretization)**
+
+* If the model has no closed-form transition (e.g. general SDE), you approximate its dynamics with Euler/Milstein.
+* Then you are no longer sampling the true distribution of $S_T$, but an *approximate* one.
+* This introduces **bias** that depends on the step size $h$:
+
+  * Strong error: pathwise bias \~ $O(h^\gamma)$.
+  * Weak error: expectation bias \~ $O(h^\beta)$.
+
+👉 With GBM stepper, your `advance()` uses the *exact* transition — so **no bias**.
+👉 With Euler/Milstein, yes, there is discretization bias (which vanishes as $h \to 0$).
+
+---
+
+## 3. Putting them together
+
+So for a European option in your framework:
+
+* **GBM terminalDraw** →
+  Bias = 0 (exact distribution).
+  Error = only Monte Carlo variability + floating-point noise.
+
+* **GBM full-path (with exact step)** →
+  Same: bias = 0 (because each step is exact).
+  Error = only Monte Carlo variability.
+
+* **Euler/Milstein** →
+  Bias = nonzero (discretization).
+  Error = Monte Carlo variability **+** discretization bias.
+  As you refine dt, the bias shrinks at known order (0.5 / 1.0).
+
+---
+
+✅ **So the clean separation is:**
+
+* **MC error** → variability (random noise, decays with more paths, no bias).
+* **Stepper error** → bias (systematic, depends on dt, goes away only as dt→0).
+
+---
+
+Do you want me to also sketch a little diagram showing the **two error axes** (MC noise vs discretization bias) so you can use it in your report/presentation?

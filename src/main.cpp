@@ -6,6 +6,103 @@
 #include <sstream>
 #include <algorithm>
 #include "../include/utilities.hpp"
+#include "../include/pde.hpp"
+
+// === NEW: pretty-printer for statistical convergence
+static void print_stat_conv(const char* tag, const MCStatConvergence& R)
+{
+    std::cout << "\n-- MC statistical convergence ("
+              << tag << ")  [expect slope ≈ -0.5] --\n";
+    std::cout << std::left << std::setw(12) << "Paths"
+              << std::setw(18) << "Price"
+              << std::setw(18) << "StdErr"
+              << std::setw(18) << "CI95 width" << "\n";
+
+    for (std::size_t i=0;i<R.Ns.size();++i) {
+        const double ci95 = 2.0 * 1.96 * R.stdErrs[i];
+        std::cout << std::left << std::setw(12) << R.Ns[i]
+                  << std::setw(18) << std::fixed << std::setprecision(6) << R.prices[i]
+                  << std::setw(18) << R.stdErrs[i]
+                  << std::setw(18) << ci95 << "\n";
+    }
+    std::cout << "Estimated order (slope log SE vs log N) ≈ "
+              << std::fixed << std::setprecision(4) << R.slope_loglog << "\n";
+}
+// === NEW: run the statistical convergence for ANY stepper using pricePath
+template <typename Step>
+void run_statistical_convergence_any_stepper(const char* name,
+                                             EuropeanOption<double>& opt,
+                                             const Step& stepper,
+                                             const std::string& optType,
+                                             bool AV, bool CV)
+{
+    MonteCarlo<double, EuropeanOption<double>, Step> mc(opt, stepper);
+    std::vector<std::size_t> Ns = { 500, 1000, 2000, 5000, 10000, 20000, 50000 };
+
+    auto R = mc.statisticalConvergenceByPaths(optType, Ns, AV, CV);
+
+    std::ostringstream tag;
+    tag << name << " / " << optType << " / AV=" << (AV?"on":"off") << " / CV=" << (CV?"on":"off");
+    print_stat_conv(tag.str().c_str(), R);
+}
+
+
+static double slope_loglog(const std::vector<double>& h,
+                           const std::vector<double>& e)
+{
+    const int n = static_cast<int>(h.size());
+    double Sx=0, Sy=0, Sxx=0, Sxy=0;
+    for (int i=0;i<n;++i) {
+        const double x = std::log(h[i]);
+        const double y = std::log(e[i]);
+        Sx+=x; Sy+=y; Sxx+=x*x; Sxy+=x*y;
+    }
+    return (n*Sxy - Sx*Sy) / (n*Sxx - Sx*Sx); // estimated order
+}
+
+template <typename Step>
+void run_convergence(const char* name,
+                     EuropeanOption<double>& opt,
+                     const Step& stepper,
+                     const std::string& optType,
+                     std::size_t Npaths)
+{
+    MonteCarlo<double, EuropeanOption<double>, Step> mc(opt, stepper);
+    mc.useAntitheticVariates(false);
+    mc.useControlVariates(false);
+
+    std::vector<std::size_t> tSteps = { 4, 8, 16, 32, 64, 128, 256 , 512 , 1024 };  // time steps
+    std::vector<double> h, estrL1, eweak;
+
+    std::cout << "\n-- Convergence (NO AV/CV): " << name << " / " << optType << " --\n";
+    std::cout << std::left << std::setw(8)  << "M"
+              << std::setw(12) << "dt"
+              << std::setw(18) << "Strong L1"
+              << std::setw(18) << "Weak bias"
+              << std::setw(18) << "SE(bias)" << "\n";
+
+    for (auto step : tSteps) {
+        const double dt = opt.getMaturityTime() / double(step);
+        auto s = mc.strongErrorOnState(Npaths, step);
+        auto w = mc.weakErrorOnPayoff(optType, Npaths, step);
+
+        std::cout << std::left << std::setw(8)  << step
+                  << std::setw(12) << std::fixed << std::setprecision(6) << dt
+                  << std::setw(18) << s.meanAbs
+                  << std::setw(18) << w.bias
+                  << std::setw(18) << w.seBias << "\n";
+
+        h.push_back(dt);
+        estrL1.push_back(s.meanAbs);
+        eweak.push_back(w.bias);
+    }
+
+    const double p_strong = slope_loglog(h, estrL1);
+    const double p_weak   = slope_loglog(h, eweak);
+    std::cout << "Estimated STRONG order ≈ " << p_strong
+              << "   |   Estimated WEAK order ≈ " << p_weak << "\n";
+}
+
 
 // ---------- Lightweight table reporter ----------
 struct Reporter {
@@ -191,7 +288,7 @@ int main()
         double r  = 0.05;
         double v  = 0.20;
         double T  = 1.0;
-        std::size_t Npaths = 100000; // tweak freely
+        std::size_t Npaths = 10000; // tweak freely
     } cfg;
 
     // ATM: K = S0
@@ -241,6 +338,52 @@ int main()
 
         rep.finish();
     }
+
+    {
+    const std::size_t NpathsConv = 100000; // tune for stability/speed
+    run_convergence("Euler",    euro, euler,    "call", NpathsConv);
+    run_convergence("Milstein", euro, milstein, "call", NpathsConv);
+    run_convergence("GBM", euro, gbm, "call", NpathsConv);
+    }
+
+    {
+    // Demonstrate on all steppers; AV/CV off to show the raw -1/2 slope.
+    run_statistical_convergence_any_stepper("GBM (full-path)",      euro, gbm,      "call", /*AV*/false, /*CV*/false);
+    run_statistical_convergence_any_stepper("Euler (full-path)",    euro, euler,    "call", /*AV*/false, /*CV*/false);
+    run_statistical_convergence_any_stepper("Milstein (full-path)", euro, milstein, "call", /*AV*/false, /*CV*/false);
+
+    // Optional: show that VR changes the constant, not the slope
+    run_statistical_convergence_any_stepper("Euler (full-path)",    euro, euler,    "call", /*AV*/true,  /*CV*/false);
+    run_statistical_convergence_any_stepper("Euler (full-path)",    euro, euler,    "call", /*AV*/false, /*CV*/true);
+    }
+
+    //     // ================= PDE (Crank–Nicolson) =================
+    // std::cout << "\n********** PDE (Crank–Nicolson) **********\n";
+    // {
+    //     auto t0 = std::chrono::steady_clock::now();
+    //     PDECNPricer<double> pde(euro);
+    //     const double Smax = 5.0 * euro.getSpotPrice(); // good default; tweak freely
+    //     auto cn_call = pde.price("call", /*M*/600, /*N*/600, Smax, /*rannacher*/true);
+    //     auto cn_put  = pde.price("put",  /*M*/600, /*N*/600, Smax, /*rannacher*/true);
+    //     auto t1 = std::chrono::steady_clock::now();
+    //     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    //     std::cout << std::fixed << std::setprecision(6);
+    //     std::cout << "CN Call: " << cn_call.price
+    //               << "   (Δ=" << cn_call.delta
+    //               << ", Γ=" << cn_call.gamma
+    //               << ", Θ=" << cn_call.theta
+    //               << ")   [M=" << cn_call.M << ", N=" << cn_call.N
+    //               << ", Smax=" << cn_call.Smax << ", " << ms << " ms]\n";
+
+    //     std::cout << "CN  Put: " << cn_put.price
+    //               << "   (Δ=" << cn_put.delta
+    //               << ", Γ=" << cn_put.gamma
+    //               << ", Θ=" << cn_put.theta
+    //               << ")   [M=" << cn_put.M << ", N=" << cn_put.N
+    //               << ", Smax=" << cn_put.Smax << "]\n";
+    // }
+
 
     return 0;
 }
