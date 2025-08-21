@@ -49,11 +49,11 @@ struct MCReturn
     T stdDev = 0.0; // standard deviation of the price
 };
 
-template <typename T>
-inline T gbm_ST (T S0, T r, T sigma, T maturity, T Z)
-{
-    return S0 * std::exp((r - 0.5 * sigma * sigma) * maturity + sigma * Z * std::sqrt(maturity));
-}
+// template <typename T>
+// inline T gbm_ST (T S0, T r, T sigma, T maturity, T Z)
+// {
+//     return S0 * std::exp((r - 0.5 * sigma * sigma) * maturity + sigma * Z * std::sqrt(maturity));
+// }
 
 // inline double standard_normal_sample() {
 //     static thread_local std::mt19937_64 rng{std::random_device{}()};  // engine (64-bit Mersenne Twister)
@@ -249,6 +249,55 @@ struct MCStatConvergence {
     std::vector<double> stdErrs;   // reported standard errors (per N)
     double slope_loglog = 0.0;     // slope of log(SE) vs log(N), expect ≈ -0.5
 };
+
+// ========= Convergence result containers =========
+struct StrongConvergenceResult {
+    std::vector<std::size_t> M;   // time steps per year
+    std::vector<double> dt;       // timestep size
+    std::vector<double> meanAbs;  // E|S_T^exact - S_T^num|
+    std::vector<double> rms;      // sqrt(E[(S_T^exact - S_T^num)^2])
+    double slope_meanAbs = 0.0;   // slope of log(meanAbs) vs log(dt)
+    double slope_rms     = 0.0;   // slope of log(rms) vs log(dt)
+};
+
+struct WeakConvergenceResult {
+    std::vector<std::size_t> M;
+    std::vector<double> dt;
+    std::vector<double> bias;     // |E[g(S_T^num)] - E[g(S_T^exact)]|
+    std::vector<double> seBias;   // SE of bias estimator (for CI)
+    double slope_bias = 0.0;      // slope of log(bias) vs log(dt)
+};
+
+// ========= Convergence Analyzer =========
+template <typename T, typename Opt, typename Step>
+class ConvergenceAnalyzer {
+public:
+    ConvergenceAnalyzer(const Opt& opt, const Step& stepper)
+    : _opt(opt), _stepper(stepper) {}
+
+    // MC statistical: uses MonteCarlo::statisticalConvergenceByPaths
+    MCStatConvergence mcConvergence(const std::string& optionType,
+                                    const std::vector<std::size_t>& Ns,
+                                    bool useAV=false, bool useCV=false) const;
+
+    // Strong: uses MonteCarlo::strongErrorOnState over an M-grid
+    StrongConvergenceResult strongConvergence(std::size_t numPaths,
+                                              const std::vector<std::size_t>& Ms) const;
+
+    // Weak: uses MonteCarlo::weakErrorOnPayoff over an M-grid
+    WeakConvergenceResult weakConvergence(const std::string& optionType,
+                                          std::size_t numPaths,
+                                          const std::vector<std::size_t>& Ms) const;
+
+private:
+    Opt       _opt;
+    Step      _stepper;
+};
+
+// Utility: slope (simple OLS) of log(y) vs log(x)
+double slope_loglog_xy(const std::vector<double>& x,
+                       const std::vector<double>& y);
+
 
 template <typename T, typename Opt, typename Step>
 class MonteCarlo {
