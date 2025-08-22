@@ -71,6 +71,11 @@ inline double norm_cdf(double x) {
     return 0.5 * std::erfc(-x / std::sqrt(2.0));
 }
 
+// -------- Normal PDF --------
+inline double norm_pdf(double x) {
+    return std::exp(-0.5 * x * x) / std::sqrt(2.0 * M_PI);
+}
+
 // // -------- Thread-local RNG & N(0,1) --------
 // inline double standard_normal_sample() {
 //     thread_local std::mt19937_64 rng{
@@ -93,6 +98,15 @@ inline double slope_loglog_xy(const std::vector<double>& x, const std::vector<do
     const double num = n*Sxy - Sx*Sy;
     const double den = n*Sxx - Sx*Sx;
     return num / den;
+}
+
+template <typename T>
+inline std::vector<T> generateStandardNormalSamples(std::size_t numSamples) {
+    std::vector<T> samples(numSamples);
+    for (std::size_t i = 0; i < numSamples; ++i) {
+        samples[i] = static_cast<T>(standard_normal_sample());
+    }
+    return samples;
 }
 
 // inline double slope_loglog_xy(const std::vector<double>& x,

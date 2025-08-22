@@ -1,17 +1,38 @@
-To run in serial: 
+# Linux/macOS — parallel (default)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OMP=ON
+cmake --build build -j
+./build/pricer
 
-g++ -O3 -march=native src/mc_explicit.cpp src/main.cpp -Iinclude -o pricer && ./pricer
+# macOS — with Homebrew GCC (OpenMP)
+CXX=g++-15 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_OMP=ON
+cmake --build build -j
+./build/pricer
 
+# Linux/macOS — force serial run
+OMP_NUM_THREADS=1 ./build/pricer
 
-TO run in parallel:
+# Linux/macOS — N threads
+OMP_NUM_THREADS=N ./build/pricer
 
-g++ -O3 -march=native -DUSE_OMP -fopenmp \
-  -I./include src/mc_explicit.cpp src/main.cpp -o pricer
+# Windows — parallel (default)
+cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DUSE_OMP=ON
+cmake --build build -j
+.\build\pricer.exe
 
-export OMP_NUM_THREADS=8   # or however many cores you want
-export OMP_PROC_BIND=close # optional, keeps threads near each other
-./pricer
+# Windows — force serial
+set OMP_NUM_THREADS=1
+.\build\pricer.exe   # cmd.exe
 
-Or just:
+# or:
+$env:OMP_NUM_THREADS=1; .\build\pricer.exe   # PowerShell
 
-OMP_NUM_THREADS=8 ./pricer
+# Windows — N threads
+set OMP_NUM_THREADS=N
+.\build\pricer.exe   # cmd.exe
+
+# or:
+$env:OMP_NUM_THREADS=N; .\build\pricer.exe   # PowerShell
+
+# Clean (ALL PLATFORMS)
+cmake --build build --target clean_all
+

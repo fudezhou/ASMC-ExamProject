@@ -82,56 +82,63 @@ static void export_price_sequences_terminal_gbm(const std::string& base_tag,
     GBM<double> gbm;
 
     for (int seq = 0; seq < numSeq; ++seq) {
-        // If your MC engine supports seeding, set a different seed here for independence
-        // uint64_t seed = 1234567ULL + 7919ULL * seq;
+        // keep your existing seeding pattern
         rng_reseed_thread(static_cast<uint64_t>(seq));
-        // Before each variant, reset to the same (seq,N)-tagged stream:
-        auto tag = [](int seq, std::size_t N, int var){ 
-            // small hash / tag composer; any stable mapping works
-            return (uint64_t(seq) << 32) ^ (uint64_t(N) << 2) ^ uint64_t(var);
+
+        auto tag = [](int seq_id, std::size_t N, int var){
+            return (uint64_t(seq_id) << 32) ^ (uint64_t(N) << 2) ^ uint64_t(var);
         };
 
+        // Pre-generate once per sequence, at the maximum length you’ll ever need
+        std::vector<double> preGeneratedZ = generateStandardNormalSamples<double>(Nmax);
+
         for (std::size_t N = Nmin; N <= Nmax; N += stride) {
-            // NONE
+            // NONE (AV off): need N normals
             rng_reseed_thread(tag(seq, N, 0));
             {
                 MonteCarlo<double, EuropeanOption<double>, GBM<double>> mc(opt, gbm);
                 mc.useAntitheticVariates(false);
-                mc.useControlVariates(false); // inert here
-                auto r = mc.priceTerminal(optionType, N);
+                mc.useControlVariates(false);
+                auto spanN = std::span<const double>(preGeneratedZ.data(), N);
+                auto r = mc.priceTerminal(optionType, N, spanN);
                 *f_none << N << "," << seq << "," << r.price << "\n";
             }
-            // AV
+
+            // AV on: need N/2 normals (engine uses ±Z)
             rng_reseed_thread(tag(seq, N, 1));
             {
                 MonteCarlo<double, EuropeanOption<double>, GBM<double>> mc(opt, gbm);
                 mc.useAntitheticVariates(true);
-                mc.useControlVariates(false); // inert
-                auto r = mc.priceTerminal(optionType, N);
+                mc.useControlVariates(false);
+                auto spanPairs = std::span<const double>(preGeneratedZ.data(), N/2);
+                auto r = mc.priceTerminal(optionType, N, spanPairs);
                 *f_av << N << "," << seq << "," << r.price << "\n";
             }
-            // CV (inert with terminal draw; kept for completeness)
+
+            // CV on (AV off): still needs N normals
             rng_reseed_thread(tag(seq, N, 2));
             {
                 MonteCarlo<double, EuropeanOption<double>, GBM<double>> mc(opt, gbm);
                 mc.useAntitheticVariates(false);
                 mc.useControlVariates(true);
-                auto r = mc.priceTerminal(optionType, N);
+                auto spanN = std::span<const double>(preGeneratedZ.data(), N);
+                auto r = mc.priceTerminal(optionType, N, spanN);
                 *f_cv << N << "," << seq << "," << r.price << "\n";
             }
-            // BOTH (AV effective; CV inert)
+
+            // BOTH (AV on + CV on): needs N/2 normals
             rng_reseed_thread(tag(seq, N, 3));
             {
                 MonteCarlo<double, EuropeanOption<double>, GBM<double>> mc(opt, gbm);
                 mc.useAntitheticVariates(true);
                 mc.useControlVariates(true);
-                auto r = mc.priceTerminal(optionType, N);
+                auto spanPairs = std::span<const double>(preGeneratedZ.data(), N/2);
+                auto r = mc.priceTerminal(optionType, N, spanPairs);
                 *f_both << N << "," << seq << "," << r.price << "\n";
             }
         }
     }
 }
-
 
 
 // Simple XY CSV writer: header + pairs.
@@ -169,7 +176,7 @@ static void write_paths_csv(const std::string& filename,
     for (std::size_t p = 0; p < Npaths; ++p) {
         for (std::size_t k = 0; k < Nsteps; ++k) {
             const std::size_t idx = p * Nsteps + k; // path-major
-            const double t = (k + 1) * dt;
+            const double t = (static_cast<double>(k) + 1.0) * dt; // FIX: explicit cast
             out << p << ',' << k << ',' << t << ',' << flat[idx] << '\n';
         }
     }
@@ -188,6 +195,7 @@ static void dump_mc_paths_csv(const std::string& filename,
                               bool useCV = false)
 {
     MonteCarlo<double, EuropeanOption<double>, Step> mc(opt, stepper);
+    mc.enablePathStorage(true);
     mc.useAntitheticVariates(useAV);
     mc.useControlVariates(useCV);
 
@@ -368,7 +376,8 @@ static void stream_mc_stat_conv(const char* tag, Analyzer& ca, const std::string
 struct Reporter {
     bool header_printed = false;
     void print_header_once() {
-        if (header_printed) return; header_printed = true;
+        if (header_printed) return;
+        header_printed = true; // FIX: put on its own line
         using std::setw; using std::left; using std::right;
         std::cout << "\n";
         std::cout << std::string(118, '=') << "\n";
@@ -406,28 +415,39 @@ struct Reporter {
     void finish() { std::cout << std::string(118, '=') << "\n"; }
 };
 
-inline void print_scenario_banner(const std::string& tag,
-                                  double S0, double K, double r, double sigma, double T,
-                                  double bs_call, double bs_put)
+inline void print_bs_banner(double S0, double K, double r, double sigma, double T,
+                                        double bs_call, double bs_put,
+                                        double delta_call, double delta_put,
+                                        double vega_call, double vega_put)
 {
-    std::ostringstream lineParams, lineTitle, lineBS;
+    std::ostringstream lineParams, lineTitle, lineBS, lineGreeks;
     lineParams << std::fixed
                << "S0=" << std::setprecision(6) << S0 << "  "
-               << "K=" << std::setprecision(6) << K << "  "
+               << "K="  << std::setprecision(6) << K  << "  "
                << "S0/K=" << std::setprecision(6) << (S0 / K) << "  "
-               << "r=" << std::setprecision(6) << r << "  "
+               << "r=" << std::setprecision(6) << r  << "  "
                << "sigma=" << std::setprecision(6) << sigma << "  "
                << "T=" << std::setprecision(6) << T;
-    lineTitle << " SCENARIO: " << tag << "  ";
-    lineBS << " BS Call=" << std::fixed << std::setprecision(6) << bs_call
-           << "    BS Put=" << bs_put;
+    lineTitle  << " BLACK - SCHOLES - MERTON MODEL (est. 1973)";
+    lineBS     << " BS Call=" << std::fixed << std::setprecision(6) << bs_call
+               << "    BS Put=" << bs_put;
+    lineGreeks << " Delta(call)=" << std::fixed << std::setprecision(6) << delta_call
+               << "    Delta(put)=" << delta_put
+               << "    Vega(call)="  << vega_call
+               << "    Vega(put)="   << vega_put;
 
-    const std::size_t w = std::max({ lineTitle.str().size(), lineParams.str().size(), lineBS.str().size() });
+    const std::size_t w = std::max({ lineTitle.str().size(),
+                                     lineParams.str().size(),
+                                     lineBS.str().size(),
+                                     lineGreeks.str().size() });
     const std::string eq(w, '='), dash(w, '-');
     std::cout << "\n" << eq << "\n" << lineTitle.str() << "\n" << dash << "\n"
               << lineParams.str() << "\n" << dash << "\n"
-              << lineBS.str() << "\n" << eq << "\n";
+              << lineBS.str()     << "\n"
+              << lineGreeks.str() << "\n" << eq << "\n";
 }
+
+
 
 // Run one pricing row (unchanged core)
 template <typename Step>
@@ -450,16 +470,66 @@ template <typename Step>
 void run_terminal_row(const char* methodName, EuropeanOption<double>& opt, const Step& stepper,
                       const std::string& optType, bool useAV, bool useCV, std::size_t Npaths, Reporter& rep)
 {
+    // Pre-generate exactly what the engine will consume:
+    const std::size_t Nz = useAV ? (Npaths/2) : Npaths;
+    std::vector<double> preGeneratedZ = generateStandardNormalSamples<double>(Nz);
+
     MonteCarlo<double, EuropeanOption<double>, Step> mc(opt, stepper);
     mc.useAntitheticVariates(useAV);
     mc.useControlVariates(useCV);
+
     const auto t0 = std::chrono::steady_clock::now();
-    auto r = mc.priceTerminal(optType, Npaths);
+    auto r = mc.priceTerminal(optType, Npaths, preGeneratedZ);  // span overload will read N or N/2 as needed
     const auto t1 = std::chrono::steady_clock::now();
+
     const double ms  = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double ci95= 1.96 * r.stdDev;
     rep.print_row(methodName, optType, useAV, useCV, Npaths, /*Steps*/1, r.price, ci95, ms);
 }
+
+
+// Print finite-difference Greeks (terminal / exact GBM) for all AV/CV combos
+template <typename Step>
+static void print_terminal_fd_greeks_table(EuropeanOption<double>& opt,
+                                           const Step& stepper,
+                                           const std::string& optType,
+                                           std::size_t Npaths,
+                                           double h)
+{
+    using std::cout; using std::left; using std::right; using std::setw;
+    using std::fixed; using std::setprecision;
+
+    auto run_one = [&](bool av, bool cv) {
+        MonteCarlo<double, EuropeanOption<double>, Step> mc(opt, stepper);
+        mc.useAntitheticVariates(av);
+        mc.useControlVariates(cv);
+        auto G = mc.computeGreeksFD(optType, Npaths, /*numSteps*/1, h);
+        cout << left
+             << setw(6)  << optType
+             << setw(6)  << (av ? "on" : "off")
+             << setw(6)  << (cv ? "on" : "off")
+             << right
+             << setw(12) << fixed << setprecision(6) << G.deltaFD
+             << setw(12) << fixed << setprecision(6) << G.deltaBD
+             << setw(12) << fixed << setprecision(6) << G.deltaCD
+             << setw(12) << fixed << setprecision(6) << G.vegaFD
+             << setw(12) << fixed << setprecision(6) << G.vegaBD
+             << setw(12) << fixed << setprecision(6) << G.vegaCD
+             << "\n";
+    };
+
+    cout << "\n-- Finite-difference Greeks (terminal / exact GBM) --\n";
+    cout << left << setw(6) << "Type" << setw(6) << "AV" << setw(6) << "CV"
+         << right << setw(12) << "DeltaFD" << setw(12) << "DeltaBD" << setw(12) << "DeltaCD"
+         << setw(12) << "VegaFD"  << setw(12) << "VegaBD"  << setw(12) << "VegaCD"  << "\n";
+    cout << std::string(72, '-') << "\n";
+
+    run_one(false, false);
+    run_one(true,  false);
+    run_one(false, true);
+    run_one(true,  true);
+}
+
 
 template <typename Step>
 void run_fullpath_groups_for_type(const char* methodName, EuropeanOption<double>& opt, const Step& stepper,
@@ -498,31 +568,54 @@ void run_terminal_groups_for_type(const char* methodName, EuropeanOption<double>
     run_terminal_row(methodName, opt, stepper, optType, true,  true, Npaths, rep);
 }
 
-
 // ---------- MAIN ----------
 int main()
 {
     rng_set_seed(42);
 
+    // baseline
     struct {
         double S0 = 100.0;
+        double K  = 100.0;
         double r  = 0.05;
         double v  = 0.20;
         double T  = 1.0;
         std::size_t Npaths = 1000000;
     } cfg;
 
-    EuropeanOption<double> euro(cfg.S0, /*K=*/cfg.S0, cfg.r, cfg.v, cfg.T);
+    // struct {
+    //     double S0 = 200;
+    //     double K  = 215;
+    //     double r  = 0.05;
+    //     double v  = 0.35;
+    //     double T  = 1.0;
+    //     std::size_t Npaths = 1000000;
+    // } cfg;
+
+    EuropeanOption<double> euro(cfg.S0, /*K=*/cfg.K, cfg.r, cfg.v, cfg.T);
     GBM<double>      gbm;
     Euler<double>    euler;
     Milstein<double> milstein;
 
-    const double bs_call = euro.closedForm("call");
-    const double bs_put  = euro.closedForm("put");
-    print_scenario_banner("ATM",
-                          euro.getSpotPrice(), euro.getStrikePrice(),
-                          euro.getRiskFreeRate(), euro.getVolatility(), euro.getMaturityTime(),
-                          bs_call, bs_put);
+    // const double bs_call = euro.closedForm("call");
+    // const double bs_put  = euro.closedForm("put");
+
+    // --- Closed-form prices + Greeks for CALL and PUT ---
+    euro.setType("call");
+    double bs_call    = euro.closedForm("call");
+    double delta_call = euro.computeDelta();
+    double vega_call  = euro.computeVega();   // (same as put in BSM)
+
+    euro.setType("put");
+    double bs_put     = euro.closedForm("put");
+    double delta_put  = euro.computeDelta();
+    double vega_put   = euro.computeVega();   // == vega_call
+
+
+    print_bs_banner(euro.getSpotPrice(), euro.getStrikePrice(),
+                euro.getRiskFreeRate(), euro.getVolatility(), euro.getMaturityTime(),
+                bs_call, bs_put, delta_call, delta_put, vega_call, vega_put);
+
 
     // ================= Full-path (discretized) =================
     std::cout << "\n********** FULL-PATH (discretized) MONTE CARLO **********\n";
@@ -546,6 +639,15 @@ int main()
         run_terminal_groups_for_type("Terminal", euro, gbm, "put",  cfg.Npaths, rep);
         rep.finish();
     }
+
+    {
+        // Print FD Greeks for CALL and PUT with all AV/CV combos
+        const double h_fd = 1e-4; // small bump for S0 and sigma (your computeGreeksFD uses one h)
+        print_terminal_fd_greeks_table(euro, gbm, "call", cfg.Npaths, h_fd);
+        print_terminal_fd_greeks_table(euro, gbm, "put",  cfg.Npaths, h_fd);
+
+    }
+    
 
     // ================= Convergence Analyzer (STREAMING) =================
     {
@@ -599,14 +701,67 @@ int main()
     export_price_sequences_terminal_gbm("PriceSeq_GBMterm_call", euro, "call",
                                         Nmax, numSeq, Nmin, stride);
 
-    std::cout << "[csv] Wrote PriceSeq_GBMterm_call_{none,av,cv,both}.csv\n";
+        std::cout << "[csv] Wrote PriceSeq_GBMterm_call_{none,av,cv,both}.csv\n";
+    } catch (const std::exception& ex) {
+        std::cerr << "[csv] export error (GBM terminal): " << ex.what() << "\n";
+    }
+
+    // ===== 10 paths with per-(path,step) reseeding (NOT a single stream per path) =====
+try {
+    const std::size_t Npaths_demo = 100;
+    const std::size_t Nsteps_demo = 252;
+    const double Tmat    = euro.getMaturityTime();
+    const double dt_demo = Tmat / static_cast<double>(Nsteps_demo);
+
+    // one high-entropy base (only to avoid relying on time(); you can hardcode if you prefer)
+    std::random_device rd;
+    const uint64_t base_seed =
+        (static_cast<uint64_t>(rd()) << 32) ^ static_cast<uint64_t>(rd());
+
+    // simple strong mixer (splitmix64 style) to make distinct seeds for (path, step)
+    auto mix64 = [](uint64_t x) {
+        x += 0x9E3779B97f4a7c15ULL;
+        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+        x =  x ^ (x >> 31);
+        return x;
+    };
+
+    std::ofstream out("random_paths_perZ_demo.csv");
+    if (!out) throw std::runtime_error("cannot open random_paths_perZ_demo.csv");
+    out << "path_id,step,t,S\n";
+
+    std::vector<double> STs; STs.reserve(Npaths_demo);
+
+    for (std::size_t p = 0; p < Npaths_demo; ++p) {
+        double S = euro.getSpotPrice();
+        for (std::size_t k = 0; k < Nsteps_demo; ++k) {
+            // NEW: re-seed BEFORE EACH DRAW (anti-pattern by design for this demo)
+            const uint64_t seed_pk = mix64(base_seed ^ ((uint64_t(p) << 32) ^ uint64_t(k)));
+            rng_reseed_thread(seed_pk);
+
+            const double Z = static_cast<double>(standard_normal_sample());
+            S = gbm.advanceWithZ(S,
+                                 euro.getRiskFreeRate(),
+                                 euro.getVolatility(),
+                                 dt_demo, Z);
+
+            const double t = (static_cast<double>(k) + 1.0) * dt_demo;
+            out << p << ',' << k << ',' << t << ',' << S << '\n';
+        }
+        STs.push_back(S);
+    }
+    out.close();
+
+    std::cout << "[paths] Wrote 10 paths with per-(path,step) reseeded Z to random_paths_perZ_demo.csv\n";
+    std::cout << "Terminal S_T for these paths:\n";
+    for (std::size_t i = 0; i < STs.size(); ++i)
+        std::cout << "  path " << i << ": " << std::fixed << std::setprecision(6) << STs[i] << "\n";
 } catch (const std::exception& ex) {
-    std::cerr << "[csv] export error (GBM terminal): " << ex.what() << "\n";
+    std::cerr << "[random per-Z paths] ERROR: " << ex.what() << "\n";
 }
-
-
-
 
 
     return 0;
 }
+

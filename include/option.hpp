@@ -83,6 +83,29 @@ public:
         return phi * ( S0 * norm_cdf(phi * d1) - K * std::exp(-r*Tm) * norm_cdf(phi * d2) );
     }
 
+    T computeDelta() {
+        const double phi = (this->getType() == "call") ? +1.0 : -1.0;
+        const double S0 = this->getSpotPrice();
+        const double K  = this->getStrikePrice();
+        const double r  = this->getRiskFreeRate();
+        const double v  = this->getVolatility();
+        const double Tm = this->getMaturityTime();
+
+        const double d1 = (std::log(S0 / K) + (r + 0.5*v*v)*Tm) / (v*std::sqrt(Tm));
+        return phi * norm_cdf(phi * d1);
+    }
+
+    T computeVega() {
+        const double S0 = this->getSpotPrice();
+        const double K  = this->getStrikePrice();
+        const double r  = this->getRiskFreeRate();
+        const double v  = this->getVolatility();
+        const double Tm = this->getMaturityTime();
+
+        const double d1 = (std::log(S0 / K) + (r + 0.5*v*v)*Tm) / (v*std::sqrt(Tm));
+        return S0 * std::sqrt(Tm) * norm_pdf(d1);
+    }
+
     void info() const {
         std::cout << "======================================\n"
                   << this->getName() << " Option Info\n"

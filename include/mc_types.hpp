@@ -48,5 +48,14 @@ struct WeakConvergenceResult {
     double slope_bias = 0.0;
 };
 
+struct MCgreeksFD {
+    double deltaFD;
+    double vegaFD;
+    double deltaBD;
+    double vegaBD;
+    double deltaCD;
+    double vegaCD;
+};
+
 #endif // MC_TYPES_HPP
 

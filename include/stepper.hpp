@@ -51,6 +51,7 @@ public:
         return S0 * std::exp((r - 0.5*sigma*sigma)*Tmat + sigma*Z*std::sqrt(Tmat));
     }
     T terminalDrawWithZ(T S0, T r, T sigma, T Tmat, T Z) const {
+        // CAVEAT: TERMINAL DRAW SHOULD USE PRE GENERATED RANDOM SAMPLES
         return S0 * std::exp((r - 0.5*sigma*sigma)*Tmat + sigma*Z*std::sqrt(Tmat));
     }
 
